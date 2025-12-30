@@ -19,7 +19,6 @@ echo -e "${BLUE}╚════════════════════�
 
 echo ""
 echo -e "${YELLOW}[*] Syncing git repository...${NC}"
-# Handle divergent branches gracefully
 git config pull.rebase false 2>/dev/null || true
 git pull --no-rebase 2>/dev/null || git fetch origin 2>/dev/null || true
 
@@ -34,13 +33,14 @@ fi
 echo -e "${GREEN}[✓] Build successful${NC}"
 
 echo ""
-echo -e "${YELLOW}[*] Creating test targets file...${NC}"
+echo -e "${YELLOW}[*] Creating test targets file with VALID addresses...${NC}"
 cat > test_targets.txt << 'EOF'
-# Bitcoin P2PKH Addresses
-1A1z7agoat2YMSZ2qTCrni2hWVQ76i1M62
-1dice8EMCQAqQSN88NYLERg7yajL87KWh
+# Valid Bitcoin Addresses
+1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
+1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2
+12c6DSiU4Rq3P4ZxziKxzrL5LmMBrzjrJX
 
-# Hash160 Examples
+# Hash160 Format
 62e907b15cbf27d5425399ebf6f0fb50ebb88f18
 EOF
 echo -e "${GREEN}[✓] Test targets created${NC}"
@@ -101,7 +101,7 @@ for mode in 1 2 3; do
                     --threads 4 \
                     --mode geometric \
                     --start 1 \
-                    --multiplier 1.5 \
+                    --multiplier 2 \
                     --scan-mode $scan \
                     --database test_targets.txt > /dev/null 2>&1 || result=$?
                 ;;
@@ -112,7 +112,7 @@ for mode in 1 2 3; do
             echo -e "${GREEN}PASS${NC}"
             passed=$((passed+1))
         else
-            echo -e "${RED}FAIL${NC}"
+            echo -e "${RED}FAIL (exit code: $result)${NC}"
             failed=$((failed+1))
         fi
     done
