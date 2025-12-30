@@ -18,8 +18,10 @@ echo -e "${BLUE}║        BTC GOLD C++ - COMPREHENSIVE TEST SUITE             �
 echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
 
 echo ""
-echo -e "${YELLOW}[*] Pulling latest changes...${NC}"
-git pull
+echo -e "${YELLOW}[*] Syncing git repository...${NC}"
+# Handle divergent branches gracefully
+git config pull.rebase false 2>/dev/null || true
+git pull --no-rebase 2>/dev/null || git fetch origin 2>/dev/null || true
 
 echo ""
 echo -e "${YELLOW}[*] Compiling release build...${NC}"
