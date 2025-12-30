@@ -2,7 +2,7 @@
 
 #include "types.h"
 #include <vector>
-#include <memory>
+#include <secp256k1.h>
 
 namespace btc_gold {
 
@@ -10,34 +10,28 @@ class Secp256k1 {
 public:
     static Secp256k1& instance();
     
-    /**
-     * Generate compressed public key from private key
-     */
+    // Core crypto
     PublicKey pubkey_compressed(const PrivateKey& privkey) const;
-    
-    /**
-     * Get uncompressed public key (65 bytes)
-     */
     std::vector<uint8_t> pubkey_uncompressed(const PrivateKey& privkey) const;
-    
-    /**
-     * Verify private key is valid
-     */
     bool verify_privkey(const PrivateKey& privkey) const;
     
-    /**
-     * Fast batch public key generation
-     */
-    void batch_pubkeys_compressed(
-        const std::vector<PrivateKey>& privkeys,
-        std::vector<PublicKey>& pubkeys
-    ) const;
+    // Optimization: Add scalar to public key (Point Addition)
+    // Returns true on success, updates pubkey_bytes in place
+    bool pubkey_tweak_add(std::vector<uint8_t>& pubkey_bytes, const uint8_t* tweak) const;
     
+    // Utils
+    std::string to_wif(const PrivateKey& privkey, bool compressed) const;
+    std::string to_address(const std::vector<uint8_t>& pubkey_bytes) const;
+    std::string encode_base58(const std::vector<uint8_t>& data) const;
+    std::string encode_base58check(const std::vector<uint8_t>& data) const;
+
+    secp256k1_context* get_context() const { return context_; }
+
 private:
     Secp256k1();
     ~Secp256k1();
-    Secp256k1(const Secp256k1&) = delete;
-    Secp256k1& operator=(const Secp256k1&) = delete;
+    
+    secp256k1_context* context_;
 };
 
 }  // namespace btc_gold
