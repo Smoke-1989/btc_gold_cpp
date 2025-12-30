@@ -5,10 +5,14 @@
 #include <iomanip>
 #include <thread>
 #include <mutex>
+#include <unordered_set>
 
 namespace btc_gold {
 
 static std::mutex file_mutex;
+// Static set to track found hashes across all threads to avoid duplicates
+static std::mutex found_set_mutex;
+static std::unordered_set<std::string> found_hashes;
 
 Worker::Worker(
     int worker_id,
@@ -123,36 +127,23 @@ void Worker::run_random_mode() {
     }
 }
 
-// IMPROVED GEOMETRIC MODE: Geometric Jump + Sequential Range Scan
-// Instead of just checking 2^1, 2^2, 2^3... it checks a RANGE around each power.
-// Example: At 2^N, it checks [2^N, 2^N + 10000] using fast TweakAdd
 void Worker::run_geometric_mode() {
     uint64_t current_base = config_.start_value;
     uint64_t multiplier = config_.multiplier;
-    
-    // Each thread takes a different geometric series offset if multiplier is small,
-    // OR they work together on the sequential range at each step.
-    // STRATEGY: 
-    // All threads process the SAME geometric base, but split the sequential work.
-    // e.g. At base 2^50, threads 0-7 scan [2^50 ... 2^50 + 8M]
-    
-    // Constant range to scan at each geometric step (e.g., 1 Million keys)
     const uint64_t RANGE_PER_STEP = 1000000; 
     
     PrivateKey privkey_bytes;
-    
-    // Tweak for sequential scan (step = num_threads)
     uint64_t stride_val = config_.num_threads;
+    
+    // Tweak for sequential scan
     uint8_t tweak[32] = {0};
     for(int i=0; i<8; i++) tweak[31-i] = (stride_val >> (i*8)) & 0xFF;
 
     while (!stats_.should_stop && current_base <= config_.end_value && current_base > 0) {
         
-        // Current starting point for THIS worker at this geometric level
         uint64_t current = current_base + worker_id_;
         uint64_t step_end = current_base + RANGE_PER_STEP;
         
-        // --- Initialize Sequential Scan for this Step ---
         int_to_privkey(current, privkey_bytes);
         
         std::vector<uint8_t> pubkey_c, pubkey_u;
@@ -165,11 +156,9 @@ void Worker::run_geometric_mode() {
             pubkey_u = secp256k1_.pubkey_uncompressed(privkey_bytes);
         }
 
-        // --- Fast Sequential Scan (TweakAdd) ---
         while (current < step_end && !stats_.should_stop) {
              if (config_.end_value > 0 && current > config_.end_value) break;
 
-            // Check Compressed
             if (!pubkey_c.empty()) {
                 auto hash = hash_engine_->compute(pubkey_c);
                 if (database_.contains(hash)) {
@@ -179,7 +168,6 @@ void Worker::run_geometric_mode() {
                 secp256k1_.pubkey_tweak_add(pubkey_c, tweak);
             }
 
-            // Check Uncompressed
             if (!pubkey_u.empty()) {
                 auto hash = hash_engine_->compute(pubkey_u);
                 if (database_.contains(hash)) {
@@ -193,14 +181,27 @@ void Worker::run_geometric_mode() {
             stats_.total_keys++;
         }
         
-        // Move to next geometric power
         uint64_t next_base = current_base * multiplier;
-        if (next_base <= current_base) break; // Overflow protection
+        if (next_base <= current_base) break; 
         current_base = next_base;
     }
 }
 
 void Worker::check_and_save(const PrivateKey& privkey, const Hash160& hash160, bool compressed) {
+    std::stringstream ss_hash;
+    ss_hash << std::hex << std::setfill('0');
+    for (auto byte : hash160) ss_hash << std::setw(2) << (int)byte;
+    std::string hash_str = ss_hash.str();
+
+    // Check for duplicates
+    {
+        std::lock_guard<std::mutex> lock(found_set_mutex);
+        if (found_hashes.count(hash_str)) {
+            return; // Already found, skip logging/saving
+        }
+        found_hashes.insert(hash_str);
+    }
+
     stats_.found_count++;
     
     std::vector<uint8_t> pubkey_bytes;
@@ -215,10 +216,7 @@ void Worker::check_and_save(const PrivateKey& privkey, const Hash160& hash160, b
     std::string wif_c = secp256k1_.to_wif(privkey, true);
     std::string wif_u = secp256k1_.to_wif(privkey, false);
     
-    std::stringstream ss_hash, ss_priv, ss_pub;
-    ss_hash << std::hex << std::setfill('0');
-    for (auto byte : hash160) ss_hash << std::setw(2) << (int)byte;
-    
+    std::stringstream ss_priv, ss_pub;
     ss_priv << std::hex << std::setfill('0');
     for (auto byte : privkey) ss_priv << std::setw(2) << (int)byte;
 
@@ -237,7 +235,7 @@ void Worker::check_and_save(const PrivateKey& privkey, const Hash160& hash160, b
         out << "Address:            " << address << " (" << (compressed ? "Compressed" : "Uncompressed") << ")\n";
         out << "Private Key (HEX):  " << ss_priv.str() << "\n";
         out << "Public Key (HEX):   " << ss_pub.str() << "\n";
-        out << "Hash160:            " << ss_hash.str() << "\n";
+        out << "Hash160:            " << hash_str << "\n";
         out << "WIF (Compressed):   " << wif_c << "\n";
         out << "WIF (Uncompressed): " << wif_u << "\n";
         out << "================================================================================\n";
