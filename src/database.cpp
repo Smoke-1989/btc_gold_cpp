@@ -71,17 +71,6 @@ static std::vector<uint8_t> hex_to_bytes(const std::string& hex) {
 }
 
 // ============================================================================
-// Helper: Bytes to hex string
-// ============================================================================
-static std::string bytes_to_hex(const std::vector<uint8_t>& bytes) {
-    std::stringstream ss;
-    for (uint8_t byte : bytes) {
-        ss << std::setfill('0') << std::setw(2) << std::hex << (int)byte;
-    }
-    return ss.str();
-}
-
-// ============================================================================
 // Constructor
 // ============================================================================
 Database::Database() {}
@@ -134,14 +123,15 @@ bool Database::load(const std::string& filename, Config::InputType type) {
         }
         catch (const std::exception& e) {
             errors++;
-            Logger::instance().warn("Error parsing line: %s | Reason: %s", 
-                line.c_str(), e.what());
+            std::string error_msg = std::string("Error parsing line: ") + line + 
+                                    " | Reason: " + e.what();
+            Logger::instance().warn(error_msg);
             continue;
         }
     }
     
     file.close();
-    Logger::instance().info("Loaded %d targets (errors: %d)", loaded, errors);
+    Logger::instance().info("Loaded %d targets", loaded);
     return loaded > 0;
 }
 
@@ -274,13 +264,6 @@ Hash160 Database::parse_pubkey(const std::string& hex) {
     catch (const std::exception& e) {
         throw std::runtime_error(std::string("Pubkey parse error: ") + e.what());
     }
-}
-
-// ============================================================================
-// Get database size
-// ============================================================================
-size_t Database::size() const {
-    return targets_.size();
 }
 
 }  // namespace btc_gold
