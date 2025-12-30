@@ -30,6 +30,8 @@ Config ConfigParser::parse_cli(int argc, char** argv) {
                     config.mode = Config::Mode::RANDOM;
                 } else if (mode == "geometric" || mode == "3") {
                     config.mode = Config::Mode::GEOMETRIC;
+                } else if (mode == "terminator" || mode == "4") { // <--- TERMINATOR
+                    config.mode = Config::Mode::TERMINATOR;
                 }
             }
         }
@@ -67,6 +69,16 @@ Config ConfigParser::parse_cli(int argc, char** argv) {
         else if (arg == "--multiplier") {
             if (i + 1 < argc) {
                 config.multiplier = std::stoull(argv[++i]);
+            }
+        }
+        else if (arg == "--range-min") { // <--- NEW
+            if (i + 1 < argc) {
+                config.range_min_bit = std::stoi(argv[++i]);
+            }
+        }
+        else if (arg == "--range-max") { // <--- NEW
+            if (i + 1 < argc) {
+                config.range_max_bit = std::stoi(argv[++i]);
             }
         }
         else if (arg == "--input-type") {
@@ -110,6 +122,7 @@ void ConfigParser::print_menu() {
     std::cout << "[1] Linear Mode\n";
     std::cout << "[2] Random Mode\n";
     std::cout << "[3] Geometric Mode\n";
+    std::cout << "[4] TERMINATOR Mode\n"; // <---
 }
 
 void ConfigParser::print_help() {
@@ -118,12 +131,14 @@ void ConfigParser::print_help() {
     std::cout << "  btc_gold --help\n";
     std::cout << "\nOptions:\n";
     std::cout << "  --threads, -t <N>          Number of threads (default: auto)\n";
-    std::cout << "  --mode, -m <mode>          Mode: linear, random, geometric (default: random)\n";
+    std::cout << "  --mode, -m <mode>          Mode: linear, random, geometric, terminator\n";
     std::cout << "  --scan-mode, -s <N>        Scan: 1=compressed, 2=uncompressed, 3=both (default: 3)\n";
     std::cout << "  --database, -d <file>      Database file (default: alvos.txt)\n";
     std::cout << "  --start <value>            Start value (decimal or hex with 0x)\n";
     std::cout << "  --end <value>              End value (decimal or hex with 0x)\n";
-    std::cout << "  --multiplier <value>       Multiplier for geometric mode (default: 2)\n";
+    std::cout << "  --multiplier <value>       Multiplier / Initial Jump (Terminator)\n";
+    std::cout << "  --range-min <bit>          Terminator Min Bit (e.g. 66)\n";
+    std::cout << "  --range-max <bit>          Terminator Max Bit (e.g. 67)\n";
     std::cout << "  --input-type <N>           Input: 1=address, 2=hash160, 3=pubkey (default: 1)\n";
     std::cout << "  --help, -h                 Show this help\n";
 }
