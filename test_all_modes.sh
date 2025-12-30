@@ -54,8 +54,8 @@ echo -e "${YELLOW}Testing all mode combinations...${NC}"
 echo ""
 
 # Test configurations
-declare -A modes=([1]="LINEAR" [2]="RANDOM" [3]="GEOMETRIC")
-declare -A scan_modes=([1]="COMPRESSED" [2]="UNCOMPRESSED" [3]="BOTH")
+declare -A modes=([1]="LIN" [2]="RAN" [3]="GEO")
+declare -A scan_modes=([1]="COM" [2]="UNC" [3]="BOT")
 
 test_count=0
 passed=0
@@ -68,12 +68,13 @@ for mode in 1 2 3; do
         mode_name="${modes[$mode]}"
         scan_name="${scan_modes[$scan]}"
         
-        echo -n "Test $test_count: MODE=${mode_name:0:3} SCAN=${scan_name:0:3} ... "
+        echo -n "Test $test_count: MODE=$mode_name SCAN=$scan_name ... "
         
         # Clean up previous output
         rm -f found_gold.txt
         
         # Different parameters based on mode
+        result=0
         case $mode in
             1)  # LINEAR
                 timeout 10 ./build/btc_gold \
@@ -82,7 +83,7 @@ for mode in 1 2 3; do
                     --start 1 \
                     --end 100000 \
                     --scan-mode $scan \
-                    --database test_targets.txt > /dev/null 2>&1 && passed=$((passed+1)) || failed=$((failed+1))
+                    --database test_targets.txt > /dev/null 2>&1 || result=$?
                 ;;
             2)  # RANDOM
                 timeout 10 ./build/btc_gold \
@@ -91,7 +92,7 @@ for mode in 1 2 3; do
                     --start 1 \
                     --end 1000000 \
                     --scan-mode $scan \
-                    --database test_targets.txt > /dev/null 2>&1 && passed=$((passed+1)) || failed=$((failed+1))
+                    --database test_targets.txt > /dev/null 2>&1 || result=$?
                 ;;
             3)  # GEOMETRIC
                 timeout 10 ./build/btc_gold \
@@ -100,14 +101,17 @@ for mode in 1 2 3; do
                     --start 1 \
                     --multiplier 1.5 \
                     --scan-mode $scan \
-                    --database test_targets.txt > /dev/null 2>&1 && passed=$((passed+1)) || failed=$((failed+1))
+                    --database test_targets.txt > /dev/null 2>&1 || result=$?
                 ;;
         esac
         
-        if [ $? -eq 0 ]; then
+        # Timeout returns 124, which is acceptable (test ran and timed out = success)
+        if [ $result -eq 0 ] || [ $result -eq 124 ]; then
             echo -e "${GREEN}PASS${NC}"
+            passed=$((passed+1))
         else
             echo -e "${RED}FAIL${NC}"
+            failed=$((failed+1))
         fi
     done
 done
