@@ -2,10 +2,11 @@
 
 #include "config.h"
 #include "database.h"
-#include "worker.h"  // Include worker.h to get Stats definition
+#include "worker.h"
 #include <vector>
 #include <memory>
 #include <atomic>
+#include <thread> // Fix: Added missing include
 
 namespace btc_gold {
 
@@ -14,11 +15,11 @@ public:
     Engine(const Config& config);
     ~Engine();
     
-    bool initialize();
+    // Fix: Updated signature to match main.cpp call and engine.cpp impl
+    bool initialize(const std::string& database_file);
     bool start();
     void stop();
     
-    // Stats is defined in worker.h now
     Stats& get_stats() { return stats_; }
 
 private:
@@ -26,12 +27,12 @@ private:
     
     Config config_;
     Database database_;
-    
-    // Stats struct is shared between engine and workers
     Stats stats_;
     
     bool running_ = false;
-    std::vector<std::thread> threads_;
+    
+    // Fix: Renamed to match engine.cpp usage
+    std::vector<std::thread> worker_threads_;
 };
 
 }  // namespace btc_gold
