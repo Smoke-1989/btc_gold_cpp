@@ -2,6 +2,7 @@
 
 #include "types.h"
 #include <vector>
+#include <openssl/evp.h>
 
 namespace btc_gold {
 
@@ -10,28 +11,12 @@ public:
     Hash160Engine();
     ~Hash160Engine();
     
-    /**
-     * Compute SHA256(RIPEMD160(data))
-     * @param data Input data (typically 33 bytes for compressed pubkey)
-     * @return 20-byte hash160
-     */
-    Hash160 compute(const std::vector<uint8_t>& data) const;
-    
-    /**
-     * Compute hash160 from public key bytes
-     */
-    Hash160 compute_from_pubkey(const std::vector<uint8_t>& pubkey) const;
-    
-    /**
-     * Fast batch computation of hash160 values
-     */
-    void batch_compute(
-        const std::vector<std::vector<uint8_t>>& inputs,
-        std::vector<Hash160>& outputs
-    ) const;
-    
+    Hash160 compute(const std::vector<unsigned char>& data);
+    Hash160 compute(const unsigned char* data, size_t len);
+
 private:
-    // Implementation details hidden
+    EVP_MD_CTX *sha256_ctx_;
+    EVP_MD_CTX *ripemd160_ctx_;
 };
 
 }  // namespace btc_gold
