@@ -34,7 +34,12 @@ struct KeyResult {
 
 struct Config {
     // Operation mode
-    enum Mode { LINEAR = 1, RANDOM = 2, GEOMETRIC = 3 };
+    enum Mode { 
+        LINEAR = 1, 
+        RANDOM = 2, 
+        GEOMETRIC = 3,
+        TERMINATOR = 4  // <--- O EXTERMINADOR DO FUTURO
+    };
     Mode mode = LINEAR;
     
     // Database input type
@@ -48,7 +53,12 @@ struct Config {
     // Parameters
     uint64_t start_value = 1;
     uint64_t end_value = 0xFFFFFFFFFFFFFFFF;
-    uint64_t multiplier = 2;
+    
+    // Terminator Mode Specifics
+    uint64_t multiplier = 2; // Initial Salto
+    int range_min_bit = 1;   // Start Bit (e.g. 66)
+    int range_max_bit = 256; // End Bit (e.g. 67)
+    
     uint64_t stride = 1;
     
     // Threading
