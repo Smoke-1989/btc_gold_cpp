@@ -185,25 +185,18 @@ void Worker::run_geometric_mode() {
     }
 }
 
-// ============================================================================
-// THE TERMINATOR MODE - Precision Geometric Jump with Descending Multiplier
-// ============================================================================
 void Worker::run_terminator_mode() {
     unsigned __int128 multiplier = config_.multiplier;
-    
-    // Each thread takes a different multiplier in descending sequence
     multiplier -= worker_id_;
     
-    // ✅ FIXED RANGE CALCULATION
     unsigned __int128 min_val = (unsigned __int128)1 << (config_.range_min_bit - 1);
-    unsigned __int128 max_val = ((unsigned __int128)1 << config_.range_max_bit) - 1;  // Removed -1 from exponent
+    unsigned __int128 max_val = ((unsigned __int128)1 << config_.range_max_bit) - 1; 
     
     if (config_.range_max_bit >= 128) max_val = ~((unsigned __int128)0); 
 
     PrivateKey privkey_bytes;
     std::vector<uint8_t> pubkey_vec;
 
-    // Log range for debugging (only worker 0)
     if (worker_id_ == 0) {
         std::stringstream ss;
         ss << "[TERMINATOR] Range: 2^" << (config_.range_min_bit - 1) 
@@ -211,6 +204,8 @@ void Worker::run_terminator_mode() {
         ss << " | Starting Multiplier: " << (uint64_t)config_.multiplier;
         Logger::instance().info(ss.str());
     }
+
+    uint64_t decrements = 0;
 
     while (!stats_.should_stop && multiplier > 1) {
         
@@ -228,7 +223,6 @@ void Worker::run_terminator_mode() {
         }
         
         if (!overflow) {
-            // Scan exact geometric points within [min, max]
             while (current <= max_val && !stats_.should_stop) {
                 int128_to_privkey(current, privkey_bytes);
                 
@@ -249,14 +243,24 @@ void Worker::run_terminator_mode() {
                 stats_.total_keys++;
                 
                 unsigned __int128 next = current * multiplier;
-                if (next < current) break; // Overflow
+                if (next < current) break; 
                 current = next;
             }
         }
 
-        // Decrement multiplier (each thread steps by num_threads to avoid overlap)
+        // Decrement multiplier logic
         if (multiplier <= (unsigned __int128)config_.num_threads) break;
         multiplier -= config_.num_threads;
+        
+        // Log progress every 10000 decrements (worker 0 only)
+        if (worker_id_ == 0) {
+            decrements++;
+            if (decrements % 10000 == 0) {
+                 std::stringstream ss;
+                 ss << "[TERMINATOR] Current Multiplier: " << (uint64_t)multiplier;
+                 Logger::instance().info(ss.str());
+            }
+        }
     }
 }
 
