@@ -3,6 +3,7 @@
 #include <iostream>
 #include <cstring>
 #include <stdexcept>
+#include <limits>
 
 namespace btc_gold {
 
@@ -30,7 +31,7 @@ Config ConfigParser::parse_cli(int argc, char** argv) {
                     config.mode = Config::Mode::RANDOM;
                 } else if (mode == "geometric" || mode == "3") {
                     config.mode = Config::Mode::GEOMETRIC;
-                } else if (mode == "terminator" || mode == "4") { // <--- TERMINATOR
+                } else if (mode == "terminator" || mode == "4") {
                     config.mode = Config::Mode::TERMINATOR;
                 }
             }
@@ -49,20 +50,35 @@ Config ConfigParser::parse_cli(int argc, char** argv) {
         else if (arg == "--start") {
             if (i + 1 < argc) {
                 std::string val = argv[++i];
-                if (val.substr(0, 2) == "0x" || val.substr(0, 2) == "0X") {
-                    config.start_value = std::stoull(val, nullptr, 16);
-                } else {
-                    config.start_value = std::stoull(val);
+                // Use custom parser for potentially large hex values if needed, 
+                // but stoull is limited to 64-bit. For larger ranges, we need manual parsing.
+                try {
+                    if (val.substr(0, 2) == "0x" || val.substr(0, 2) == "0X") {
+                        config.start_value = std::stoull(val, nullptr, 16);
+                    } else {
+                        config.start_value = std::stoull(val);
+                    }
+                } catch (const std::out_of_range& e) {
+                   // If 64-bit overflow, clamp to max or handle error
+                   // For Random mode > 64 bit, we might need 128-bit support in Config.
+                   // For now, let's catch it.
+                   std::cerr << "[WARNING] Start value too large for 64-bit logic, clamping to max.\n";
+                   config.start_value = std::numeric_limits<uint64_t>::max();
                 }
             }
         }
         else if (arg == "--end") {
             if (i + 1 < argc) {
                 std::string val = argv[++i];
-                if (val.substr(0, 2) == "0x" || val.substr(0, 2) == "0X") {
-                    config.end_value = std::stoull(val, nullptr, 16);
-                } else {
-                    config.end_value = std::stoull(val);
+                try {
+                    if (val.substr(0, 2) == "0x" || val.substr(0, 2) == "0X") {
+                        config.end_value = std::stoull(val, nullptr, 16);
+                    } else {
+                        config.end_value = std::stoull(val);
+                    }
+                } catch (const std::out_of_range& e) {
+                   std::cerr << "[WARNING] End value too large for 64-bit logic, clamping to max.\n";
+                   config.end_value = std::numeric_limits<uint64_t>::max();
                 }
             }
         }
@@ -71,12 +87,12 @@ Config ConfigParser::parse_cli(int argc, char** argv) {
                 config.multiplier = std::stoull(argv[++i]);
             }
         }
-        else if (arg == "--range-min") { // <--- NEW
+        else if (arg == "--range-min") {
             if (i + 1 < argc) {
                 config.range_min_bit = std::stoi(argv[++i]);
             }
         }
-        else if (arg == "--range-max") { // <--- NEW
+        else if (arg == "--range-max") {
             if (i + 1 < argc) {
                 config.range_max_bit = std::stoi(argv[++i]);
             }
@@ -122,7 +138,7 @@ void ConfigParser::print_menu() {
     std::cout << "[1] Linear Mode\n";
     std::cout << "[2] Random Mode\n";
     std::cout << "[3] Geometric Mode\n";
-    std::cout << "[4] TERMINATOR Mode\n"; // <---
+    std::cout << "[4] TERMINATOR Mode\n";
 }
 
 void ConfigParser::print_help() {
