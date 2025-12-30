@@ -1,11 +1,11 @@
 #pragma once
 
-#include "types.h"
+#include "config.h"
 #include "database.h"
-#include "worker.h"
-#include <thread>
+#include "worker.h"  // Include worker.h to get Stats definition
 #include <vector>
 #include <memory>
+#include <atomic>
 
 namespace btc_gold {
 
@@ -14,34 +14,24 @@ public:
     Engine(const Config& config);
     ~Engine();
     
-    /**
-     * Initialize engine with database
-     */
-    bool initialize(const std::string& database_file);
-    
-    /**
-     * Start scanning
-     */
+    bool initialize();
     bool start();
-    
-    /**
-     * Stop scanning
-     */
     void stop();
     
-    /**
-     * Get reference to statistics
-     */
-    Worker::Stats& get_stats() { return stats_; }
-    
+    // Stats is defined in worker.h now
+    Stats& get_stats() { return stats_; }
+
 private:
+    void print_progress();
+    
     Config config_;
     Database database_;
-    Worker::Stats stats_;
-    std::vector<std::thread> worker_threads_;
-    bool running_ = false;
     
-    void print_progress();
+    // Stats struct is shared between engine and workers
+    Stats stats_;
+    
+    bool running_ = false;
+    std::vector<std::thread> threads_;
 };
 
 }  // namespace btc_gold
