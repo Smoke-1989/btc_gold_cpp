@@ -50,11 +50,16 @@ static std::vector<uint8_t> decode_base58(const std::string& encoded) {
 }
 
 int main() {
+    // Known valid Bitcoin addresses
     std::vector<std::string> test_addresses = {
-        "1A1z7agoat2YMSZ2qTCrni2hWVQ76i1M62",
-        "1dice8EMCQAqQSN88NYLERg7yajL87KWh",
-        "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"
+        "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",  // Genesis block (Satoshi)
+        "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2",  // Known address
+        "1dice8EMZqgUvrHKwcW1gimzhyT5sq64J",   // SatoshiDice
+        "12c6DSiU4Rq3P4ZxziKxzrL5LmMBrzjrJX",  // Another known
     };
+    
+    int passed = 0;
+    int failed = 0;
     
     for (const auto& address : test_addresses) {
         std::cout << "\nTesting: " << address << std::endl;
@@ -71,6 +76,7 @@ int main() {
             
             if (decoded.size() != 25) {
                 std::cout << "  ERROR: Expected 25 bytes!" << std::endl;
+                failed++;
                 continue;
             }
             
@@ -85,7 +91,7 @@ int main() {
             SHA256(sha256_1, SHA256_DIGEST_LENGTH, sha256_2);
             
             bool checksum_valid = (std::vector<uint8_t>(sha256_2, sha256_2 + 4) == checksum);
-            std::cout << "  Checksum: " << (checksum_valid ? "VALID" : "INVALID") << std::endl;
+            std::cout << "  Checksum: " << (checksum_valid ? "\033[32mVALID\033[0m" : "\033[31mINVALID\033[0m") << std::endl;
             
             if (checksum_valid) {
                 std::cout << "  Hash160: ";
@@ -93,12 +99,25 @@ int main() {
                     printf("%02x", decoded[i]);
                 }
                 std::cout << std::endl;
+                passed++;
+            } else {
+                failed++;
             }
             
         } catch (const std::exception& e) {
             std::cout << "  ERROR: " << e.what() << std::endl;
+            failed++;
         }
     }
     
-    return 0;
+    std::cout << "\n" << std::string(60, '=') << std::endl;
+    std::cout << "Results: " << passed << " passed, " << failed << " failed" << std::endl;
+    
+    if (passed == test_addresses.size()) {
+        std::cout << "\033[32m✓ ALL TESTS PASSED!\033[0m" << std::endl;
+        return 0;
+    } else {
+        std::cout << "\033[31m✗ SOME TESTS FAILED\033[0m" << std::endl;
+        return 1;
+    }
 }
