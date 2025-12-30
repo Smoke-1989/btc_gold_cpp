@@ -133,7 +133,6 @@ void Worker::run_random_mode() {
 }
 
 void Worker::run_geometric_mode() {
-    // Legacy Geometric (Hybrid) - Leaving intact as backup
     uint64_t current_base = config_.start_value;
     uint64_t multiplier = config_.multiplier;
     const uint64_t RANGE_PER_STEP = 1000000; 
@@ -187,36 +186,41 @@ void Worker::run_geometric_mode() {
 }
 
 // ============================================================================
-// THE TERMINATOR MODE
+// THE TERMINATOR MODE - Precision Geometric Jump with Descending Multiplier
 // ============================================================================
 void Worker::run_terminator_mode() {
-    // Supports 128-bit arithmetic for Puzzle 66+
     unsigned __int128 multiplier = config_.multiplier;
     
-    // Each thread takes a different multiplier in the descending sequence
-    // Thread 0: M, M-8, M-16...
-    // Thread 1: M-1, M-9...
+    // Each thread takes a different multiplier in descending sequence
     multiplier -= worker_id_;
     
+    // ✅ FIXED RANGE CALCULATION
     unsigned __int128 min_val = (unsigned __int128)1 << (config_.range_min_bit - 1);
-    unsigned __int128 max_val = ((unsigned __int128)1 << (config_.range_max_bit - 1)) - 1;
-    // Fix for 64-bit max shift on some compilers/configs, ensure max range works
+    unsigned __int128 max_val = ((unsigned __int128)1 << config_.range_max_bit) - 1;  // Removed -1 from exponent
+    
     if (config_.range_max_bit >= 128) max_val = ~((unsigned __int128)0); 
 
     PrivateKey privkey_bytes;
     std::vector<uint8_t> pubkey_vec;
 
+    // Log range for debugging (only worker 0)
+    if (worker_id_ == 0) {
+        std::stringstream ss;
+        ss << "[TERMINATOR] Range: 2^" << (config_.range_min_bit - 1) 
+           << " to 2^" << config_.range_max_bit << " - 1";
+        ss << " | Starting Multiplier: " << (uint64_t)config_.multiplier;
+        Logger::instance().info(ss.str());
+    }
+
     while (!stats_.should_stop && multiplier > 1) {
         
-        // Find first geometric point inside range: M^k >= min_val
         unsigned __int128 current = multiplier;
         
-        // Fast forward using multiplication until we hit range or overflow
-        // Optimization: We could use logs, but simple multiplication is safer for exactness
+        // Fast forward to first value >= min_val
         bool overflow = false;
         while (current < min_val) {
             unsigned __int128 next = current * multiplier;
-            if (next < current) { // Overflow before reaching range
+            if (next < current) { 
                 overflow = true;
                 break; 
             }
@@ -224,7 +228,7 @@ void Worker::run_terminator_mode() {
         }
         
         if (!overflow) {
-            // Now scan while inside [min, max]
+            // Scan exact geometric points within [min, max]
             while (current <= max_val && !stats_.should_stop) {
                 int128_to_privkey(current, privkey_bytes);
                 
@@ -244,15 +248,13 @@ void Worker::run_terminator_mode() {
                 
                 stats_.total_keys++;
                 
-                // Next geometric step
                 unsigned __int128 next = current * multiplier;
                 if (next < current) break; // Overflow
                 current = next;
             }
         }
 
-        // Decrement Multiplier (The "Salto -1" logic)
-        // Each thread steps down by num_threads to avoid overlap
+        // Decrement multiplier (each thread steps by num_threads to avoid overlap)
         if (multiplier <= (unsigned __int128)config_.num_threads) break;
         multiplier -= config_.num_threads;
     }
