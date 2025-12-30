@@ -30,7 +30,7 @@ set(SOURCES
     src/engine.cpp
     src/worker.cpp
     src/hash160.cpp
-    src/secp256k1wrapper.cpp
+    src/secp256k1_wrapper.cpp   # FIXED: added underscore
     src/database.cpp
     src/config.cpp
     src/logger.cpp
@@ -52,7 +52,7 @@ target_link_libraries(btc_gold PRIVATE
 )
 
 # --- 5. Benchmark Tool ---
-add_executable(btc_gold_benchmark src/benchmark.cpp src/hash160.cpp src/secp256k1wrapper.cpp src/logger.cpp src/config.cpp src/database.cpp)
+add_executable(btc_gold_benchmark src/benchmark.cpp src/hash160.cpp src/secp256k1_wrapper.cpp src/logger.cpp src/config.cpp src/database.cpp)
 target_include_directories(btc_gold_benchmark PRIVATE include ${OPENSSL_INCLUDE_DIR} ${SECP256K1_INCLUDE_DIRS})
 target_link_libraries(btc_gold_benchmark PRIVATE OpenSSL::Crypto ${SECP256K1_LIBRARIES} pthread)
 
