@@ -39,13 +39,13 @@ void Worker::run_linear_mode() {
         if (secp256k1_.verify_privkey(privkey_bytes)) {
             auto pubkey = secp256k1_.pubkey_compressed(privkey_bytes);
             std::vector<uint8_t> pubkey_vec(pubkey.begin(), pubkey.end());
-            auto hash = hash_engine_.compute(pubkey_vec);
+            auto hash = hash_engine_->compute(pubkey_vec);
             check_and_save(privkey_bytes, hash);
             
             if (config_.scan_mode == Config::ScanMode::BOTH || 
                 config_.scan_mode == Config::ScanMode::UNCOMPRESSED) {
                 auto pubkey_u = secp256k1_.pubkey_uncompressed(privkey_bytes);
-                auto hash_u = hash_engine_.compute(pubkey_u);
+                auto hash_u = hash_engine_->compute(pubkey_u);
                 check_and_save(privkey_bytes, hash_u);
             }
         }
@@ -69,7 +69,7 @@ void Worker::run_random_mode() {
         if (secp256k1_.verify_privkey(privkey_bytes)) {
             auto pubkey = secp256k1_.pubkey_compressed(privkey_bytes);
             std::vector<uint8_t> pubkey_vec(pubkey.begin(), pubkey.end());
-            auto hash = hash_engine_.compute(pubkey_vec);
+            auto hash = hash_engine_->compute(pubkey_vec);
             check_and_save(privkey_bytes, hash);
         }
         
@@ -89,7 +89,7 @@ void Worker::run_geometric_mode() {
         if (secp256k1_.verify_privkey(privkey_bytes)) {
             auto pubkey = secp256k1_.pubkey_compressed(privkey_bytes);
             std::vector<uint8_t> pubkey_vec(pubkey.begin(), pubkey.end());
-            auto hash = hash_engine_.compute(pubkey_vec);
+            auto hash = hash_engine_->compute(pubkey_vec);
             check_and_save(privkey_bytes, hash);
         }
         
