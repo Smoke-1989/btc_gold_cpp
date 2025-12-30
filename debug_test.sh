@@ -5,10 +5,14 @@ echo "║              BTC GOLD C++ DEBUG TEST                       ║"
 echo "╚════════════════════════════════════════════════════════════╝"
 echo ""
 
-# Create test targets
+# Create test targets with VALID addresses
 cat > test_targets.txt << 'EOF'
-1A1z7agoat2YMSZ2qTCrni2hWVQ76i1M62
-1dice8EMCQAqQSN88NYLERg7yajL87KWh
+# Valid Bitcoin Addresses
+1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
+1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2
+12c6DSiU4Rq3P4ZxziKxzrL5LmMBrzjrJX
+
+# Hash160 Format
 62e907b15cbf27d5425399ebf6f0fb50ebb88f18
 EOF
 
@@ -33,10 +37,10 @@ fi
 
 echo ""
 echo "[*] Test 3: Try running with --help"
-./build/btc_gold --help
+./build/btc_gold --help 2>&1 | head -20
 echo ""
 
-echo "[*] Test 4: Run LINEAR mode with verbose output"
+echo "[*] Test 4: Run LINEAR mode with VALID addresses"
 echo "─────────────────────────────────────────────────────"
 timeout 5 ./build/btc_gold \
     --threads 2 \
@@ -44,27 +48,18 @@ timeout 5 ./build/btc_gold \
     --start 1 \
     --end 10000 \
     --scan-mode 1 \
-    --database test_targets.txt
+    --database test_targets.txt 2>&1
 result=$?
 echo "─────────────────────────────────────────────────────"
 echo "Exit code: $result"
 echo ""
 
 if [ $result -eq 124 ]; then
-    echo "✓ Test timed out successfully (program is running)"
+    echo "\033[32m✓ Test timed out successfully (program is running)\033[0m"
 elif [ $result -eq 0 ]; then
-    echo "✓ Test completed successfully"
+    echo "\033[32m✓ Test completed successfully\033[0m"
 else
-    echo "✗ Test FAILED with exit code: $result"
-    echo ""
-    echo "[*] Trying to get more info with strace..."
-    timeout 2 strace -e trace=open,openat,read ./build/btc_gold \
-        --threads 1 \
-        --mode linear \
-        --start 1 \
-        --end 1000 \
-        --scan-mode 1 \
-        --database test_targets.txt 2>&1 | tail -20
+    echo "\033[31m✗ Test FAILED with exit code: $result\033[0m"
 fi
 
 echo ""
