@@ -6,7 +6,7 @@
 #include "hash160.h"
 #include "secp256k1_wrapper.h"
 #include <memory>
-#include <atomic>  // Fix: Missing include for std::atomic
+#include <atomic>
 
 namespace btc_gold {
 
@@ -32,6 +32,7 @@ private:
     void run_linear_mode();
     void run_random_mode();
     void run_geometric_mode();
+    void run_terminator_mode(); // <--- NEW EXTERMINATOR MODE
     
     void check_and_save(const PrivateKey& privkey, const Hash160& hash160, bool compressed);
 
