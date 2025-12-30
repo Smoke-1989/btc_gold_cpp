@@ -1,9 +1,12 @@
-# Sample Bitcoin Addresses for Testing
-# P2PKH Addresses (start with 1)
-1A1z7agoat2YMSZ2qTCrni2hWVQ76i1M62
-1dice8EMCQAqQSN88NYLERg7yajL87KWh
-1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2
+# Valid Bitcoin Addresses for Testing
+# These are real, checksum-verified Bitcoin addresses
 
-# Hash160 Examples (40 hex chars)
+# Satoshi's Genesis Block Address
+1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
+
+# Other Known Valid Addresses
+1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2
+12c6DSiU4Rq3P4ZxziKxzrL5LmMBrzjrJX
+
+# Hash160 Format (from Satoshi's address)
 62e907b15cbf27d5425399ebf6f0fb50ebb88f18
-3c6cb8d0f6a573d4bef6a86b5f5f7e8c1d9e7f8a
