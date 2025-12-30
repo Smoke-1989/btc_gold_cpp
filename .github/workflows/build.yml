@@ -1,0 +1,43 @@
+name: Build C++ Project
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        compiler: [gcc, clang]
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Install dependencies (Ubuntu)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libsecp256k1-dev libssl-dev
+    
+    - name: Install dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew install secp256k1 openssl
+    
+    - name: Create build directory
+      run: mkdir -p build
+    
+    - name: Run CMake
+      run: |
+        cd build
+        cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} ..
+    
+    - name: Build
+      run: cmake --build build -j$(nproc)
+    
+    - name: Run Benchmark
+      run: ./build/btc_gold_benchmark
