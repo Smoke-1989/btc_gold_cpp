@@ -72,11 +72,9 @@ void Worker::run_linear_mode() {
         if (!pubkey_c.empty()) {
             auto hash = hash_engine_->compute(pubkey_c);
             if (database_.contains(hash)) {
-                // Recover privkey for logging (since we only have the counter)
                 int_to_privkey(current, privkey_bytes);
                 check_and_save(privkey_bytes, hash, true);
             }
-            // Fast Update: Add stride to point
             secp256k1_.pubkey_tweak_add(pubkey_c, tweak);
         }
 
@@ -125,58 +123,86 @@ void Worker::run_random_mode() {
     }
 }
 
+// IMPROVED GEOMETRIC MODE: Geometric Jump + Sequential Range Scan
+// Instead of just checking 2^1, 2^2, 2^3... it checks a RANGE around each power.
+// Example: At 2^N, it checks [2^N, 2^N + 10000] using fast TweakAdd
 void Worker::run_geometric_mode() {
-    // Fix: Each worker handles a distinct interleaved sequence of powers
-    // Worker 0: Start * m^0, Start * m^(0+N), Start * m^(0+2N)...
-    // Worker 1: Start * m^1, Start * m^(1+N), Start * m^(1+2N)...
-    // Where N is num_threads
-    
-    uint64_t current = config_.start_value;
+    uint64_t current_base = config_.start_value;
     uint64_t multiplier = config_.multiplier;
     
-    // Fast forward to worker's first offset
-    for (int i = 0; i < worker_id_; ++i) {
-        current *= multiplier;
-        if (current > config_.end_value) return; 
-    }
-
-    // Calculate super-multiplier for stride (multiplier ^ num_threads)
-    uint64_t stride_multiplier = 1;
-    for (int i = 0; i < config_.num_threads; ++i) {
-        stride_multiplier *= multiplier;
-    }
+    // Each thread takes a different geometric series offset if multiplier is small,
+    // OR they work together on the sequential range at each step.
+    // STRATEGY: 
+    // All threads process the SAME geometric base, but split the sequential work.
+    // e.g. At base 2^50, threads 0-7 scan [2^50 ... 2^50 + 8M]
+    
+    // Constant range to scan at each geometric step (e.g., 1 Million keys)
+    const uint64_t RANGE_PER_STEP = 1000000; 
     
     PrivateKey privkey_bytes;
-    std::vector<uint8_t> pubkey_vec;
     
-    while (!stats_.should_stop && current <= config_.end_value && current > 0) {
+    // Tweak for sequential scan (step = num_threads)
+    uint64_t stride_val = config_.num_threads;
+    uint8_t tweak[32] = {0};
+    for(int i=0; i<8; i++) tweak[31-i] = (stride_val >> (i*8)) & 0xFF;
+
+    while (!stats_.should_stop && current_base <= config_.end_value && current_base > 0) {
+        
+        // Current starting point for THIS worker at this geometric level
+        uint64_t current = current_base + worker_id_;
+        uint64_t step_end = current_base + RANGE_PER_STEP;
+        
+        // --- Initialize Sequential Scan for this Step ---
         int_to_privkey(current, privkey_bytes);
+        
+        std::vector<uint8_t> pubkey_c, pubkey_u;
         
         if (config_.scan_mode != Config::ScanMode::UNCOMPRESSED) {
             auto pk = secp256k1_.pubkey_compressed(privkey_bytes);
-            pubkey_vec.assign(pk.begin(), pk.end());
-            auto hash = hash_engine_->compute(pubkey_vec);
-            if (database_.contains(hash)) check_and_save(privkey_bytes, hash, true);
+            pubkey_c.assign(pk.begin(), pk.end());
         }
-        
         if (config_.scan_mode != Config::ScanMode::COMPRESSED) {
-            auto pk = secp256k1_.pubkey_uncompressed(privkey_bytes);
-            pubkey_vec = std::move(pk);
-            auto hash = hash_engine_->compute(pubkey_vec);
-            if (database_.contains(hash)) check_and_save(privkey_bytes, hash, false);
+            pubkey_u = secp256k1_.pubkey_uncompressed(privkey_bytes);
+        }
+
+        // --- Fast Sequential Scan (TweakAdd) ---
+        while (current < step_end && !stats_.should_stop) {
+             if (config_.end_value > 0 && current > config_.end_value) break;
+
+            // Check Compressed
+            if (!pubkey_c.empty()) {
+                auto hash = hash_engine_->compute(pubkey_c);
+                if (database_.contains(hash)) {
+                    int_to_privkey(current, privkey_bytes);
+                    check_and_save(privkey_bytes, hash, true);
+                }
+                secp256k1_.pubkey_tweak_add(pubkey_c, tweak);
+            }
+
+            // Check Uncompressed
+            if (!pubkey_u.empty()) {
+                auto hash = hash_engine_->compute(pubkey_u);
+                if (database_.contains(hash)) {
+                    int_to_privkey(current, privkey_bytes);
+                    check_and_save(privkey_bytes, hash, false);
+                }
+                secp256k1_.pubkey_tweak_add(pubkey_u, tweak);
+            }
+            
+            current += stride_val;
+            stats_.total_keys++;
         }
         
-        uint64_t next = current * stride_multiplier;
-        if (next < current) break; // Overflow check
-        current = next;
-        stats_.total_keys++;
+        // Move to next geometric power
+        uint64_t next_base = current_base * multiplier;
+        if (next_base <= current_base) break; // Overflow protection
+        current_base = next_base;
     }
 }
 
 void Worker::check_and_save(const PrivateKey& privkey, const Hash160& hash160, bool compressed) {
     stats_.found_count++;
     
-    // Re-generate pubkey bytes for address generation
     std::vector<uint8_t> pubkey_bytes;
     if (compressed) {
         auto pk = secp256k1_.pubkey_compressed(privkey);
