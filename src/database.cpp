@@ -5,6 +5,7 @@
 #include <openssl/sha.h>
 #include <openssl/ripemd.h>
 #include <iomanip>
+#include <algorithm>
 
 namespace btc_gold {
 
@@ -15,42 +16,48 @@ static const std::string BASE58_ALPHABET =
     "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 // ============================================================================
-// Helper: Decode Base58 string
+// Helper: Decode Base58 string (FIXED ALGORITHM)
 // ============================================================================
 static std::vector<uint8_t> decode_base58(const std::string& encoded) {
-    // Convert base58 to big integer
-    std::vector<uint8_t> decoded(25, 0);
-    
-    for (char c : encoded) {
-        size_t digit = BASE58_ALPHABET.find(c);
-        if (digit == std::string::npos) {
-            throw std::runtime_error("Invalid base58 character");
-        }
-        
-        // Multiply current value by 58
-        int carry = digit;
-        for (int i = decoded.size() - 1; i >= 0; --i) {
-            carry += decoded[i] * 58;
-            decoded[i] = carry & 0xFF;
-            carry >>= 8;
-        }
-        
-        if (carry > 0) {
-            throw std::runtime_error("Base58 overflow");
-        }
-    }
-    
-    // Handle leading zeros
+    // Count leading zeros (represented as '1' in base58)
     size_t leading_zeros = 0;
     for (char c : encoded) {
         if (c == '1') leading_zeros++;
         else break;
     }
     
-    std::vector<uint8_t> result(leading_zeros);
-    result.insert(result.end(), decoded.begin() + (25 - 20), decoded.end());
+    // Allocate enough space for the result (maximum size)
+    std::vector<uint8_t> result(leading_zeros + (encoded.length() * 733 / 1000) + 1, 0);
     
-    return result;
+    // Process each base58 character
+    for (char c : encoded) {
+        size_t digit = BASE58_ALPHABET.find(c);
+        if (digit == std::string::npos) {
+            throw std::runtime_error("Invalid base58 character");
+        }
+        
+        // Multiply the whole array by 58 and add the new digit
+        int carry = static_cast<int>(digit);
+        for (int i = result.size() - 1; i >= 0; --i) {
+            carry += result[i] * 58;
+            result[i] = carry & 0xFF;
+            carry >>= 8;
+        }
+        
+        if (carry > 0) {
+            throw std::runtime_error("Base58 decode overflow");
+        }
+    }
+    
+    // Find the first non-zero byte
+    auto first_non_zero = std::find_if(result.begin(), result.end(), 
+                                       [](uint8_t b) { return b != 0; });
+    
+    // Skip leading zeros in the decoded result but keep the original leading zeros
+    std::vector<uint8_t> final_result(leading_zeros, 0);
+    final_result.insert(final_result.end(), first_non_zero, result.end());
+    
+    return final_result;
 }
 
 // ============================================================================
@@ -123,15 +130,19 @@ bool Database::load(const std::string& filename, Config::InputType type) {
         }
         catch (const std::exception& e) {
             errors++;
-            std::string error_msg = std::string("Error parsing line: ") + line + 
-                                    " | Reason: " + e.what();
-            Logger::instance().warn(error_msg);
+            // Silently skip invalid entries (don't spam logs)
             continue;
         }
     }
     
     file.close();
-    Logger::instance().info("Loaded %d targets", loaded);
+    
+    if (errors > 0) {
+        Logger::instance().warn("Loaded %d targets (%d errors skipped)", loaded, errors);
+    } else {
+        Logger::instance().info("Loaded %d targets", loaded);
+    }
+    
     return loaded > 0;
 }
 
@@ -161,7 +172,8 @@ Hash160 Database::parse_address(const std::string& address) {
         std::vector<uint8_t> decoded = decode_base58(address);
         
         if (decoded.size() != 25) {
-            throw std::runtime_error("Invalid address length (expected 25 bytes)");
+            throw std::runtime_error("Invalid address length (expected 25 bytes, got " + 
+                                     std::to_string(decoded.size()) + ")");
         }
         
         // Verify checksum (last 4 bytes)
@@ -264,6 +276,13 @@ Hash160 Database::parse_pubkey(const std::string& hex) {
     catch (const std::exception& e) {
         throw std::runtime_error(std::string("Pubkey parse error: ") + e.what());
     }
+}
+
+// ============================================================================
+// Get database size
+// ============================================================================
+size_t Database::size() const {
+    return targets_.size();
 }
 
 }  // namespace btc_gold
