@@ -138,7 +138,7 @@ bool Database::load(const std::string& filename, Config::InputType type) {
     file.close();
     
     if (errors > 0) {
-        Logger::instance().warn("Loaded %d targets (%d errors skipped)", loaded, errors);
+        Logger::instance().info("Loaded %d targets (%d errors skipped)", loaded, errors);
     } else {
         Logger::instance().info("Loaded %d targets", loaded);
     }
@@ -276,13 +276,6 @@ Hash160 Database::parse_pubkey(const std::string& hex) {
     catch (const std::exception& e) {
         throw std::runtime_error(std::string("Pubkey parse error: ") + e.what());
     }
-}
-
-// ============================================================================
-// Get database size
-// ============================================================================
-size_t Database::size() const {
-    return targets_.size();
 }
 
 }  // namespace btc_gold
