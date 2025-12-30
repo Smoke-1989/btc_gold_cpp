@@ -18,7 +18,7 @@ Config ConfigParser::parse_cli(int argc, char** argv) {
         }
         else if (arg == "--threads" || arg == "-t") {
             if (i + 1 < argc) {
-                config.threads = std::stoi(argv[++i]);
+                config.num_threads = std::stoi(argv[++i]);
             }
         }
         else if (arg == "--mode" || arg == "-m") {
@@ -66,7 +66,7 @@ Config ConfigParser::parse_cli(int argc, char** argv) {
         }
         else if (arg == "--multiplier") {
             if (i + 1 < argc) {
-                config.multiplier = std::stod(argv[++i]);
+                config.multiplier = std::stoull(argv[++i]);
             }
         }
         else if (arg == "--input-type") {
@@ -123,7 +123,7 @@ void ConfigParser::print_help() {
     std::cout << "  --database, -d <file>      Database file (default: alvos.txt)\n";
     std::cout << "  --start <value>            Start value (decimal or hex with 0x)\n";
     std::cout << "  --end <value>              End value (decimal or hex with 0x)\n";
-    std::cout << "  --multiplier <value>       Multiplier for geometric mode (default: 1.5)\n";
+    std::cout << "  --multiplier <value>       Multiplier for geometric mode (default: 2)\n";
     std::cout << "  --input-type <N>           Input: 1=address, 2=hash160, 3=pubkey (default: 1)\n";
     std::cout << "  --help, -h                 Show this help\n";
 }
