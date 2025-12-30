@@ -42,8 +42,8 @@ int main(int argc, char** argv) {
             end_time - start_time
         );
         
-        auto stats = engine.get_stats();
-        double kps = (stats.total_keys.load() / 1000.0) / duration.count();
+        auto& stats = engine.get_stats();
+        double kps = (stats.total_keys.load() / 1000.0) / (duration.count() > 0 ? duration.count() : 1);
         
         logger.info("Scan completed");
         logger.info("Total keys: %lu", stats.total_keys.load());

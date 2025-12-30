@@ -30,9 +30,9 @@ public:
     void stop();
     
     /**
-     * Get current statistics
+     * Get reference to statistics
      */
-    Worker::Stats get_stats() const { return stats_; }
+    Worker::Stats& get_stats() { return stats_; }
     
 private:
     Config config_;

@@ -4,6 +4,8 @@
 #include <iostream>
 #include <iomanip>
 #include <chrono>
+#include <cstdio>
+#include <cstdarg>
 
 namespace btc_gold {
 
@@ -16,27 +18,77 @@ public:
     void set_level(Level level) { current_level_ = level; }
     void set_verbose(bool verbose) { verbose_ = verbose; }
     
-    template<typename... Args>
-    void debug(const std::string& msg, Args... args) {
+    void debug(const std::string& msg) {
         if (current_level_ <= Level::DEBUG && verbose_)
-            log(Level::DEBUG, msg, args...);
+            log(Level::DEBUG, msg);
     }
     
-    template<typename... Args>
-    void info(const std::string& msg, Args... args) {
+    void info(const std::string& msg) {
         if (current_level_ <= Level::INFO)
-            log(Level::INFO, msg, args...);
+            log(Level::INFO, msg);
     }
     
-    template<typename... Args>
-    void warn(const std::string& msg, Args... args) {
+    void info(const std::string& format, uint64_t val) {
+        if (current_level_ <= Level::INFO) {
+            char buffer[256];
+            snprintf(buffer, sizeof(buffer), format.c_str(), val);
+            log(Level::INFO, std::string(buffer));
+        }
+    }
+    
+    void info(const std::string& format, double val) {
+        if (current_level_ <= Level::INFO) {
+            char buffer[256];
+            snprintf(buffer, sizeof(buffer), format.c_str(), val);
+            log(Level::INFO, std::string(buffer));
+        }
+    }
+    
+    void info(const std::string& format, int val) {
+        if (current_level_ <= Level::INFO) {
+            char buffer[256];
+            snprintf(buffer, sizeof(buffer), format.c_str(), val);
+            log(Level::INFO, std::string(buffer));
+        }
+    }
+    
+    void info(const std::string& format, long val) {
+        if (current_level_ <= Level::INFO) {
+            char buffer[256];
+            snprintf(buffer, sizeof(buffer), format.c_str(), val);
+            log(Level::INFO, std::string(buffer));
+        }
+    }
+    
+    void info(const std::string& format, uint64_t val1, const char* val2) {
+        if (current_level_ <= Level::INFO) {
+            char buffer[512];
+            snprintf(buffer, sizeof(buffer), format.c_str(), val1, val2);
+            log(Level::INFO, std::string(buffer));
+        }
+    }
+    
+    void info(const std::string& format, int val1, int val2) {
+        if (current_level_ <= Level::INFO) {
+            char buffer[256];
+            snprintf(buffer, sizeof(buffer), format.c_str(), val1, val2);
+            log(Level::INFO, std::string(buffer));
+        }
+    }
+    
+    void warn(const std::string& msg) {
         if (current_level_ <= Level::WARN)
-            log(Level::WARN, msg, args...);
+            log(Level::WARN, msg);
     }
     
-    template<typename... Args>
-    void error(const std::string& msg, Args... args) {
-        log(Level::ERROR, msg, args...);
+    void error(const std::string& msg) {
+        log(Level::ERROR, msg);
+    }
+    
+    void error(const std::string& format, const char* val) {
+        char buffer[512];
+        snprintf(buffer, sizeof(buffer), format.c_str(), val);
+        log(Level::ERROR, std::string(buffer));
     }
     
 private:
@@ -44,8 +96,7 @@ private:
     Level current_level_ = Level::INFO;
     bool verbose_ = true;
     
-    template<typename... Args>
-    void log(Level level, const std::string& msg, Args... args) {
+    void log(Level level, const std::string& msg) {
         auto now = std::chrono::system_clock::now();
         auto time = std::chrono::system_clock::to_time_t(now);
         

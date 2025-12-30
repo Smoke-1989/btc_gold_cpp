@@ -7,16 +7,17 @@
 #include <thread>
 #include <atomic>
 #include <vector>
-#include <queue>
+#include <cstdint>
+#include <memory>
 
 namespace btc_gold {
 
 class Worker {
 public:
     struct Stats {
-        std::atomic<uint64_t> total_keys = 0;
-        std::atomic<uint64_t> found_count = 0;
-        std::atomic<bool> should_stop = false;
+        std::atomic<uint64_t> total_keys{0};
+        std::atomic<uint64_t> found_count{0};
+        std::atomic<bool> should_stop{false};
         uint64_t start_time = 0;
     };
     
@@ -35,7 +36,7 @@ private:
     const Database& database_;
     Stats& stats_;
     
-    Hash160Engine hash_engine_;
+    std::unique_ptr<Hash160Engine> hash_engine_;
     const Secp256k1& secp256k1_ = Secp256k1::instance();
     
     void run_linear_mode();

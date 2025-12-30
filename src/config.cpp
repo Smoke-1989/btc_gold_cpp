@@ -34,7 +34,7 @@ Config ConfigParser::interactive_mode() {
     std::cout << "[1] Compressed Only\n";
     std::cout << "[2] Uncompressed Only\n";
     std::cout << "[3] Both\n";
-    std::cout >> ">> ";
+    std::cout << ">> ";
     
     std::cin >> choice;
     config.scan_mode = static_cast<Config::ScanMode>(choice);
