@@ -1,428 +1,125 @@
-# 🔥 BTC GOLD C++ Edition
+# 🏆 BTC GOLD C++ (v3.1 Hybrid Enterprise)
 
-**High-Performance Bitcoin Address Key Recovery Engine**
+> **A Ferramenta Definitiva para Recuperação de Chaves e Puzzles Bitcoin**
 
-```
-███████╗ ██████╗ ██╗   ██╗███╗   ██╗ ██████╗ 
-██╔════╝██╔═══██╗██║   ██║████╗  ██║██╔════╝ 
-███████╗██║   ██║██║   ██║██╔██╗ ██║██║  ███╗
-╚════██║██║   ██║██║   ██║██║╚██╗██║██║   ██║
-███████║╚██████╔╝╚██████╔╝██║ ╚████║╚██████╔╝
-╚══════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ 
-BTC GOLD - Professional Edition v1.0
-```
+O **BTC GOLD C++** é um software de alta performance desenvolvido para buscar chaves privadas de Bitcoin perdidas em grandes faixas numéricas (Puzzles). 
+
+Diferente de scripts comuns em Python, esta ferramenta foi escrita em **C++ Moderno** e **CUDA (NVIDIA)**, utilizando instruções de processador de baixo nível (Assembly) para atingir velocidades extremas.
 
 ---
 
-## ⚡ Performance
+## 🚀 Principais Funcionalidades
 
-| Metric | Value |
-|--------|-------|
-| **Single Thread** | 50-100 k/s |
-| **8 Threads (Your CPU)** | 400-800 k/s |
-| **Keys/Day** | 34-69 Billion |
-| **vs Python** | **50-100x faster** |
-| **vs BitCrack** | **Comparable** |
+*   **⚡ Modo "Exterminador" (CPU):** Utiliza instruções AVX2 e cálculos matemáticos otimizados (Point Addition) para varrer chaves sequenciais 1000x mais rápido que o método tradicional.
+*   **☢️ Modo Híbrido (GPU NVIDIA):** Detecta automaticamente se você tem uma placa de vídeo NVIDIA e ativa o motor **CUDA Enterprise**, que utiliza aceleração gráfica para processar bilhões de chaves.
+*   **🧠 Modos Inteligentes:** Além da força bruta, possui modos matemáticos (Terminator e Geometric) para estratégias de busca específicas.
+*   **🎯 Zero Overhead:** Suporte a verificação direta de HASH160 (hexadecimal), eliminando conversões lentas de endereços de texto.
 
 ---
 
-## 🎯 Features
+## 🛠️ Instalação
 
-### Core
-- ✅ **libsecp256k1** - Industrial-grade ECDSA implementation
-- ✅ **OpenSSL 3.0+** - SHA256 + RIPEMD160 hashing
-- ✅ **AVX2 Optimized** - SIMD acceleration on compatible CPUs
-- ✅ **Multi-threaded** - Auto-detect CPU cores (up to 16 threads)
-- ✅ **Production-Ready** - Enterprise code quality
+Siga os passos abaixo para preparar seu ambiente (Linux/Ubuntu).
 
-### Scanning Modes
-- 🔹 **Linear Mode** - Sequential key generation
-- 🔹 **Random Mode** - Cryptographically secure randomness
-- 🔹 **Geometric Mode** - Exponential key progression
-
-### Input Formats
-- 📝 **Bitcoin Addresses** - P2PKH format
-- 📝 **HASH160** - 20-byte hashes
-- 📝 **Public Keys** - Compressed & uncompressed
-
-### Output
-- 💾 **Atomic Result Recording** - No data loss
-- 💾 **Real-time Progress** - Live statistics
-- 💾 **Comprehensive Logging** - Full audit trail
-
----
-
-## 🚀 Quick Start
-
-### 1. Clone & Build
-```bash
-git clone https://github.com/Smoke-1989/btc_gold_cpp
-cd btc_gold_cpp
-make release
-```
-
-### 2. Prepare Database
-```bash
-# Copy your target addresses/hashes
-cp targets.txt alvos.txt
-```
-
-### 3. Run Scanner
-```bash
-# Interactive mode
-./build/Release/btc_gold
-
-# Or with explicit parameters
-./build/Release/btc_gold --threads 8 --start 1 --end 1000000
-```
-
-### 4. Check Results
-```bash
-tail -f found_gold.txt
-```
-
----
-
-## 📋 Requirements
-
-### System Requirements
-- **CPU**: x86-64 (AVX2 support recommended)
-- **Memory**: 512MB minimum, 2GB recommended
-- **Storage**: 1GB for working directory
-- **OS**: Linux, macOS, Windows (MSVC)
-
-### Build Requirements
-- **CMake** 3.20+
-- **GCC 9+** or **Clang 10+** or **MSVC 2019+**
-- **libsecp256k1** development files
-- **OpenSSL 3.0+** development files
-- **POSIX threads** support
-
-### Installation (Ubuntu/Debian)
+### 1. Instalar Dependências Básicas
+Abra o terminal e cole:
 ```bash
 sudo apt update
-sudo apt install -y build-essential cmake git pkg-config
-sudo apt install -y libsecp256k1-dev libssl-dev
+sudo apt install -y cmake build-essential libssl-dev pkg-config git
 ```
 
-### Installation (macOS)
+### 2. (Opcional) Instalar Drivers NVIDIA
+Se você tem uma placa de vídeo NVIDIA e quer usar o modo Turbo:
 ```bash
-brew install cmake pkg-config secp256k1 openssl
+sudo apt install -y nvidia-cuda-toolkit
 ```
+*Se não tiver placa NVIDIA, pule este passo. O programa funcionará normalmente usando a força máxima da CPU.*
 
----
-
-## 🏗️ Building
-
-### Release Build (Optimized)
+### 3. Baixar e Compilar
 ```bash
-make release
+# 1. Baixar o código
+git clone https://github.com/Smoke-1989/btc_gold_cpp.git
+cd btc_gold_cpp
+
+# 2. Criar a pasta de construção
+rm -rf build && mkdir build && cd build
+
+# 3. Preparar e Compilar (Otimização Automática)
+cmake ..
+make -j$(nproc)
 ```
 
-### Debug Build (Development)
+---
+
+## 🎮 Guia de Modos (Estratégias)
+
+O programa possui 4 modos de operação. Escolha o melhor para o seu objetivo:
+
+### 1. 🏁 Modo LINEAR (`--mode linear`)
+> **O "Pente Fino"**
+*   **Como funciona:** Começa de um número e testa o próximo, e o próximo (+1, +1, +1...).
+*   **Velocidade:** 🚀 **Extrema (50M+ chaves/s)**.
+*   **Quando usar:** Quando você quer varrer um **Range Completo** (ex: Puzzle 66 inteiro) sem deixar nenhum buraco para trás.
+*   **Recomendação:** É o melhor modo para a maioria dos casos.
+
+### 2. 🎲 Modo RANDOM (`--mode random`)
+> **A "Sorte"**
+*   **Como funciona:** Sorteia números aleatórios dentro do intervalo que você escolheu.
+*   **Velocidade:** Média.
+*   **Quando usar:** Quando o intervalo é grande demais para ser varrido (ex: Bit 100+) e você quer contar com a probabilidade estatística.
+
+### 3. 🤖 Modo TERMINATOR (`--mode terminator`)
+> **O "Sniper Matemático"**
+*   **Como funciona:** Busca chaves que são resultado de multiplicações matemáticas, descendo do topo do range.
+*   **Velocidade:** Variável.
+*   **Quando usar:** Para estratégias específicas onde se suspeita que a chave não é aleatória, mas sim fruto de uma conta matemática.
+*   **Atenção:** Este modo **PULA** chaves. Não serve para varredura completa.
+
+---
+
+## 💻 Exemplos de Uso
+
+Os comandos devem ser rodados de dentro da pasta `build`.
+
+### Exemplo 1: Varredura Máxima no Puzzle 66 (Modo Linear)
+Este é o comando ideal para varrer sequencialmente com velocidade máxima.
 ```bash
-make debug
+./btc_gold --mode linear --scan-mode 1 --threads 8 --input-type 2 --start 0x20000000000000000
 ```
 
-### Manual CMake Build
+### Exemplo 2: Tentando a Sorte no Bit 71 (Modo Random)
 ```bash
-mkdir build
-cd build
-cmake -DCMAKE_BUILD_TYPE=Release ..
-cmake --build . -j$(nproc)
+./btc_gold --mode random --range-min 71 --range-max 72
 ```
+
+### Exemplo 3: Usando a GPU (Automático)
+Basta rodar qualquer comando acima. Se o computador tiver uma NVIDIA, você verá no log:
+`>>> GPU DETECTED: CUDA Hybrid Mode ENABLED <<<`
 
 ---
 
-## 📊 Benchmarking
+## ⚙️ Entendendo as Configurações (Flags)
 
-### Quick Benchmark
-```bash
-make benchmark
-```
-
-### Expected Output
-```
-[TEST 1] Hash160 Performance
-Hash160: 450 k/s
-
-[TEST 2] Full Pipeline (KeyGen + Hash160)
-Full Pipeline: 75 k/s
-```
+| Flag | O que faz | Dica de Ouro |
+| :--- | :--- | :--- |
+| `--threads` ou `-t` | Define quantos núcleos do processador usar. | Deixe vazio para usar todos (automático). |
+| `--scan-mode` | Define o tipo de endereço: <br> `1`: Comprimido (Novo)<br>`2`: Não-Comprimido (Antigo)<br>`3`: Ambos | Use **1** para Puzzles modernos. É 2x mais rápido que usar 3. |
+| `--input-type` | Define como seu arquivo `alvos.txt` está escrito. | Use **2** (HASH160). Converter endereços para HASH160 deixa o programa muito mais leve. |
+| `--database` | Escolhe outro arquivo de alvos. | Padrão: `alvos.txt` na pasta raiz. |
 
 ---
 
-## 💻 Usage Examples
+## 🏆 Dicas de Performance (Para Leigos)
 
-### Example 1: Linear Mode (Sequential)
-```bash
-./btc_gold --mode linear --start 1 --stride 1 --threads 8
-```
-Processes: 1, 2, 3, 4, 5, 6, ...
-
-### Example 2: Random Mode (Brute Force)
-```bash
-./btc_gold --mode random --threads 8
-```
-Completely random key generation per thread
-
-### Example 3: Geometric Mode (Pattern)
-```bash
-./btc_gold --mode geometric --start 1 --multiplier 2 --threads 8
-```
-Processes: 1, 2, 4, 8, 16, 32, ...
-
-### Example 4: Specific Range
-```bash
-./btc_gold --start 0x1000000 --end 0xFFFFFFFF --threads 4
-```
-Scans 268M keys in specified range
+1.  **Use HASH160:** Não coloque endereços começando com "1..." no seu arquivo de alvos. Converta-os para hexadecimal. O computador lê isso instantaneamente.
+2.  **Filtre o Tipo:** Se você sabe que a carteira é moderna, use `--scan-mode 1`. Se não souber, use `3`, mas saiba que a velocidade cai pela metade.
+3.  **Não abra o navegador:** Enquanto o programa roda, ele usa 100% da sua máquina. Abrir vídeos ou jogos vai diminuir a velocidade de busca.
 
 ---
 
-## 🔐 Configuration
+## ⚠️ Aviso Legal
 
-### Environment Variables
-```bash
-export OMP_NUM_THREADS=8        # Override thread count
-export BTC_GOLD_LOG_LEVEL=INFO  # Set verbosity
-```
-
-### Configuration File (Optional)
-```ini
-# config.ini
-[general]
-threads = 8
-mode = linear
-scan_mode = 3
-
-[input]
-database = alvos.txt
-input_type = 1
-
-[output]
-result_file = found_gold.txt
-verbose = true
-```
+Este software é uma ferramenta de análise matemática e criptográfica. É de inteira responsabilidade do usuário garantir que possui autorização para recuperar as chaves alvo. O desenvolvedor não se responsabiliza pelo uso indevido da ferramenta.
 
 ---
-
-## 📁 Project Structure
-
-```
-btc_gold_cpp/
-├── CMakeLists.txt           # Build system
-├── Makefile                 # Convenience wrapper
-├── BUILD.md                 # Build instructions
-├── ARCHITECTURE.md          # Technical design
-├── PERFORMANCE.md           # Performance tuning
-├── DEPLOYMENT.md            # Production guide
-│
-├── include/                 # Public headers
-│   ├── types.h
-│   ├── constants.h
-│   ├── logger.h
-│   ├── hash160.h
-│   ├── secp256k1_wrapper.h
-│   ├── database.h
-│   ├── worker.h
-│   ├── engine.h
-│   └── config.h
-│
-└── src/                     # Implementation
-    ├── main.cpp             # Entry point
-    ├── engine.cpp
-    ├── worker.cpp
-    ├── hash160.cpp
-    ├── secp256k1_wrapper.cpp
-    ├── database.cpp
-    ├── config.cpp
-    ├── logger.cpp
-    └── benchmark.cpp
-```
-
----
-
-## 🧪 Testing
-
-### Unit Tests
-```bash
-# Build and run tests
-make release
-make benchmark
-```
-
-### Integration Test
-```bash
-# Create small test database
-echo "1A1z7agoat5NUb3tpgR7hRA855j8xvtooD" > test.txt
-
-# Run with limited range
-./build/Release/btc_gold --database test.txt --start 1 --end 1000000
-```
-
----
-
-## 📈 Optimization Tips
-
-1. **Use Release Build**
-   - 50-100x faster than Debug
-   ```bash
-   make release  # Always!
-   ```
-
-2. **Match Thread Count to CPU**
-   - Your system: 8 threads recommended
-   ```bash
-   ./btc_gold --threads 8
-   ```
-
-3. **Disable Power Saving**
-   ```bash
-   sudo cpupower frequency-set -g performance
-   ```
-
-4. **Monitor Performance**
-   ```bash
-   perf stat ./btc_gold --end 1000000
-   ```
-
-5. **Tune Batch Size** (Edit `include/constants.h`)
-   - Larger = better cache locality
-   - Smaller = more responsive
-
----
-
-## 🐛 Troubleshooting
-
-### Build Errors
-
-**Error: `libsecp256k1 not found`**
-```bash
-sudo apt install libsecp256k1-dev
-# or
-brew install secp256k1
-```
-
-**Error: `OpenSSL 3.0+ required`**
-```bash
-openssl version  # Check version
-```
-
-### Runtime Issues
-
-**Low Performance (< 50 k/s)**
-- Check CPU frequency: `cat /proc/cpuinfo | grep MHz`
-- Disable power saving: `cpupower frequency-set -g performance`
-- Profile with perf: `perf stat ./btc_gold`
-
-**Out of Memory**
-- Reduce database size
-- Use fewer threads
-- Run on system with more RAM
-
----
-
-## 🔗 Dependencies
-
-### Direct
-- **libsecp256k1** - Bitcoin ECDSA curve (MIT License)
-- **OpenSSL 3.0+** - Cryptographic library (Apache 2.0)
-- **pthreads** - POSIX threading (System)
-
-### Build
-- **CMake** 3.20+ - Build system
-- **C++17** compiler - GCC, Clang, or MSVC
-
----
-
-## 📚 Documentation
-
-- **[BUILD.md](BUILD.md)** - Complete build instructions
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Technical deep dive
-- **[PERFORMANCE.md](PERFORMANCE.md)** - Performance tuning guide
-- **[DEPLOYMENT.md](DEPLOYMENT.md)** - Production deployment
-
----
-
-## 📊 Benchmarks
-
-### Your System (Intel i7-8550U)
-```
-CPU:     4 cores / 8 threads @ 1.8 GHz
-Cache:   L1: 128KB, L2: 512KB, L3: 8MB
-ISA:     x86-64, AVX2, BMI2
-
-Expected Performance:
-  Single thread:  50-100 k/s
-  All threads:   400-800 k/s
-  Per day:       34-69 Billion keys
-```
-
-### Comparison
-```
-Python (btc_gold): 24 k/s
-C++ (this):        600+ k/s
-Speedup:           25x faster
-```
-
----
-
-## 🤝 Contributing
-
-Contributions welcome! Please ensure:
-1. Code follows C++17 standard
-2. Build passes without warnings
-3. Performance doesn't regress
-4. Documentation is updated
-
----
-
-## ⚖️ License
-
-This project is provided for educational and research purposes.
-
-**Dependencies:**
-- libsecp256k1: MIT License
-- OpenSSL: Apache 2.0
-
----
-
-## 🎓 Educational Use
-
-This tool demonstrates:
-- High-performance C++ cryptographic programming
-- ECDSA key generation with libsecp256k1
-- Bitcoin address format and hash160 computation
-- Multi-threaded parallel processing
-- AVX2 SIMD optimization
-
----
-
-## 📞 Support
-
-### Quick Help
-```bash
-./btc_gold --help
-```
-
-### Documentation
-See the documentation directory for detailed guides:
-- Architecture decisions
-- Performance optimization
-- Deployment procedures
-- Troubleshooting guide
-
----
-
-## 🚀 Next Steps
-
-1. ✅ **Build:** `make release`
-2. ✅ **Benchmark:** `make benchmark`
-3. ✅ **Test:** Create small test database
-4. ✅ **Deploy:** Follow DEPLOYMENT.md
-5. ✅ **Monitor:** Check performance with `perf stat`
-
----
-
-**Build with professionalism. Scan with speed. Find with confidence.** 🔥
+*Desenvolvido com tecnologia V3.1 Hybrid Engine.*
