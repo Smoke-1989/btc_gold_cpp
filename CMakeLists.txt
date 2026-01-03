@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(btc_gold_cpp VERSION 3.0 LANGUAGES CXX C)
+project(btc_gold_cpp VERSION 3.1 LANGUAGES CXX C)
 
 # --- 1. Configurações "Exterminador" ---
 set(CMAKE_CXX_STANDARD 17)
@@ -29,7 +29,11 @@ if(CMAKE_CUDA_COMPILER)
     
     # Configuração CUDA Enterprise
     set(CMAKE_CUDA_STANDARD 17)
-    set(CMAKE_CUDA_ARCHITECTURES "native") # Otimiza para a placa local se existir
+    
+    # Se nao houver arquitetura definida, usa um padrao seguro (Compute 5.0+)
+    if(NOT CMAKE_CUDA_ARCHITECTURES)
+        set(CMAKE_CUDA_ARCHITECTURES "native") 
+    endif()
     
     # Flags nvcc para performance máxima
     set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS} -O3 --use_fast_math -Xptxas -v")
@@ -78,8 +82,9 @@ target_link_libraries(btc_gold PRIVATE
     pthread
 )
 
+# Ajuste Linker: Separable Compilation OFF para evitar erro de __cudaRegisterLinkedBinary
 if(CMAKE_CUDA_COMPILER)
-    set_target_properties(btc_gold PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+    set_target_properties(btc_gold PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
 endif()
 
 # --- 6. Benchmark Tool ---
@@ -87,4 +92,4 @@ add_executable(btc_gold_benchmark src/benchmark.cpp src/hash160.cpp src/secp256k
 target_include_directories(btc_gold_benchmark PRIVATE include ${OPENSSL_INCLUDE_DIR} ${SECP256K1_INCLUDE_DIRS})
 target_link_libraries(btc_gold_benchmark PRIVATE OpenSSL::Crypto ${SECP256K1_LIBRARIES} pthread)
 
-message(STATUS ">>> BUILD ENTERPRISE v3.0: READY <<<")
+message(STATUS ">>> BUILD ENTERPRISE v3.1: READY <<<")
