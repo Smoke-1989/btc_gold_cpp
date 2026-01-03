@@ -6,6 +6,23 @@ namespace btc_gold {
 namespace cuda {
 
 // ============================================================================
+// ESTRUTURAS DE DADOS (Scope Global CUDA)
+// ============================================================================
+
+// Representacao de 256 bits (8 x 32 bits)
+struct u256 {
+    unsigned int v[8];
+};
+
+// Ponto na Curva (Coordenadas Jacobianas para evitar inversao modular a cada passo)
+// X = x / z^2, Y = y / z^3
+struct Point {
+    unsigned int x[8];
+    unsigned int y[8];
+    unsigned int z[8];
+};
+
+// ============================================================================
 // CONSTANTES SECP256K1
 // ============================================================================
 // P = 2^256 - 2^32 - 977
@@ -159,16 +176,6 @@ __device__ __forceinline__ void mul_mod_p(unsigned int* r, const unsigned int* a
     #pragma unroll
     for(int i=0; i<8; i++) r[i] = high[i]; 
 }
-
-// ============================================================================
-// POINT ARITHMETIC (JACOBIAN)
-// ============================================================================
-
-struct Point {
-    unsigned int x[8];
-    unsigned int y[8];
-    unsigned int z[8];
-};
 
 __device__ void ec_add(Point* r, const Point* a, const Point* b) {
     // Implementacao Completa de Soma de Pontos (Jacobian)
