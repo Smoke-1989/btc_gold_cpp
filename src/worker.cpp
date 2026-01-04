@@ -148,16 +148,12 @@ void Worker::run_random_mode() {
 }
 
 void Worker::run_geometric_mode() {
-    // CORRECTION: Geometric mode should scan powers of 2.
-    // Example: 2^70, 2^71, 2^72... 
-    // AND nearby values (current +/- small_range)
-    
     int current_bit = config_.range_min_bit;
     int max_bit = config_.range_max_bit;
     
-    // Each thread takes a different "bit" to start if possible, or strides through bits.
-    // However, since bits are few (e.g. 70 to 160 = 90 steps), threads might finish instantly.
-    // Better strategy: Each thread takes a bit, and scans a RANGE around that power of 2.
+    // SAFETY LIMIT: Bitcoin curve order is slightly less than 2^256.
+    // Bit 256 overflows. Max safe bit index is 255.
+    if (max_bit > 255) max_bit = 255;
     
     if (worker_id_ == 0) {
         Logger::instance().info("[GEOMETRIC] Scanning powers of 2 from 2^" + std::to_string(current_bit) + " to 2^" + std::to_string(max_bit));
@@ -166,21 +162,15 @@ void Worker::run_geometric_mode() {
     PrivateKey privkey_bytes;
     std::vector<uint8_t> pubkey_c, pubkey_u;
     
-    // Distribute bits among threads: 
-    // Thread 0: Bit 70, 70+N, 70+2N...
-    // Thread 1: Bit 71, 71+N...
-    
+    // Distribute bits among threads
     for (int b = current_bit + worker_id_; b <= max_bit; b += config_.num_threads) {
         if (stats_.should_stop) break;
 
-        // Base Key = 2^b
-        // Note: 2^b is actually 1 << b. 
-        // Example: Bit 0 is 1 (2^0). Bit 255 is highest.
-        // We use big_int_power_of_2_to_privkey to handle > 64 bits safely.
+        // DEBUG: Uncomment line below to see exactly what each thread is doing
+        // Logger::instance().info("[DEBUG] Thread " + std::to_string(worker_id_) + " checking 2^" + std::to_string(b));
         
         big_int_power_of_2_to_privkey(b, privkey_bytes);
         
-        // Scan specific single key (The exact power of 2)
         if (config_.scan_mode != Config::ScanMode::UNCOMPRESSED) {
             auto pk = secp256k1_.pubkey_compressed(privkey_bytes);
             pubkey_c.assign(pk.begin(), pk.end());
@@ -193,10 +183,6 @@ void Worker::run_geometric_mode() {
             if (database_.contains(hash)) check_and_save(privkey_bytes, hash, false);
         }
         stats_.total_keys++;
-
-        // OPTIONAL: Scan a small range around the power of 2 (+1, -1, etc) could be added here
-        // But true Geometric is just the powers. 
-        // Let's stick to pure powers for now as per user request for "Geometric".
     }
 }
 
