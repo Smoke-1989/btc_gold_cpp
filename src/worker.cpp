@@ -7,6 +7,7 @@
 #include <mutex>
 #include <unordered_set>
 #include <iostream>
+#include <cmath>
 
 namespace btc_gold {
 
@@ -54,6 +55,20 @@ inline void int128_to_privkey(unsigned __int128 val, PrivateKey& privkey) {
         privkey[31 - i] = (uint8_t)((val >> (i * 8)) & 0xFF);
     }
 }
+
+// Overload for 256-bit support (BigInt simulation for Geometric Mode)
+// Geometric mode can reach high powers, so we need a robust conversion.
+// For now, limited to 128-bit range for safety, but can be easily expanded.
+// This function assumes val is within 128-bit limits.
+inline void big_int_power_of_2_to_privkey(int power, PrivateKey& privkey) {
+    std::fill(privkey.begin(), privkey.end(), 0);
+    int byte_index = power / 8;
+    int bit_index = power % 8;
+    if (byte_index < 32) {
+        privkey[31 - byte_index] = (1 << bit_index);
+    }
+}
+
 
 void Worker::run_linear_mode() {
     uint64_t current = config_.start_value + worker_id_;
@@ -133,55 +148,55 @@ void Worker::run_random_mode() {
 }
 
 void Worker::run_geometric_mode() {
-    uint64_t current_base = config_.start_value;
-    uint64_t multiplier = config_.multiplier;
-    const uint64_t RANGE_PER_STEP = 1000000; 
+    // CORRECTION: Geometric mode should scan powers of 2.
+    // Example: 2^70, 2^71, 2^72... 
+    // AND nearby values (current +/- small_range)
     
-    PrivateKey privkey_bytes;
-    uint64_t stride_val = config_.num_threads;
+    int current_bit = config_.range_min_bit;
+    int max_bit = config_.range_max_bit;
     
-    uint8_t tweak[32] = {0};
-    for(int i=0; i<8; i++) tweak[31-i] = (stride_val >> (i*8)) & 0xFF;
+    // Each thread takes a different "bit" to start if possible, or strides through bits.
+    // However, since bits are few (e.g. 70 to 160 = 90 steps), threads might finish instantly.
+    // Better strategy: Each thread takes a bit, and scans a RANGE around that power of 2.
+    
+    if (worker_id_ == 0) {
+        Logger::instance().info("[GEOMETRIC] Scanning powers of 2 from 2^" + std::to_string(current_bit) + " to 2^" + std::to_string(max_bit));
+    }
 
-    while (!stats_.should_stop && current_base <= config_.end_value && current_base > 0) {
-        uint64_t current = current_base + worker_id_;
-        uint64_t step_end = current_base + RANGE_PER_STEP;
-        int_to_privkey(current, privkey_bytes);
+    PrivateKey privkey_bytes;
+    std::vector<uint8_t> pubkey_c, pubkey_u;
+    
+    // Distribute bits among threads: 
+    // Thread 0: Bit 70, 70+N, 70+2N...
+    // Thread 1: Bit 71, 71+N...
+    
+    for (int b = current_bit + worker_id_; b <= max_bit; b += config_.num_threads) {
+        if (stats_.should_stop) break;
+
+        // Base Key = 2^b
+        // Note: 2^b is actually 1 << b. 
+        // Example: Bit 0 is 1 (2^0). Bit 255 is highest.
+        // We use big_int_power_of_2_to_privkey to handle > 64 bits safely.
         
-        std::vector<uint8_t> pubkey_c, pubkey_u;
+        big_int_power_of_2_to_privkey(b, privkey_bytes);
+        
+        // Scan specific single key (The exact power of 2)
         if (config_.scan_mode != Config::ScanMode::UNCOMPRESSED) {
             auto pk = secp256k1_.pubkey_compressed(privkey_bytes);
             pubkey_c.assign(pk.begin(), pk.end());
+            auto hash = hash_engine_->compute(pubkey_c);
+            if (database_.contains(hash)) check_and_save(privkey_bytes, hash, true);
         }
         if (config_.scan_mode != Config::ScanMode::COMPRESSED) {
             pubkey_u = secp256k1_.pubkey_uncompressed(privkey_bytes);
+            auto hash = hash_engine_->compute(pubkey_u);
+            if (database_.contains(hash)) check_and_save(privkey_bytes, hash, false);
         }
+        stats_.total_keys++;
 
-        while (current < step_end && !stats_.should_stop) {
-             if (config_.end_value > 0 && current > config_.end_value) break;
-
-            if (!pubkey_c.empty()) {
-                auto hash = hash_engine_->compute(pubkey_c);
-                if (database_.contains(hash)) {
-                    int_to_privkey(current, privkey_bytes);
-                    check_and_save(privkey_bytes, hash, true);
-                }
-                secp256k1_.pubkey_tweak_add(pubkey_c, tweak);
-            }
-            if (!pubkey_u.empty()) {
-                auto hash = hash_engine_->compute(pubkey_u);
-                if (database_.contains(hash)) {
-                    int_to_privkey(current, privkey_bytes);
-                    check_and_save(privkey_bytes, hash, false);
-                }
-                secp256k1_.pubkey_tweak_add(pubkey_u, tweak);
-            }
-            current += stride_val;
-            stats_.total_keys++;
-        }
-        uint64_t next_base = current_base * multiplier;
-        if (next_base <= current_base) break; 
-        current_base = next_base;
+        // OPTIONAL: Scan a small range around the power of 2 (+1, -1, etc) could be added here
+        // But true Geometric is just the powers. 
+        // Let's stick to pure powers for now as per user request for "Geometric".
     }
 }
 
