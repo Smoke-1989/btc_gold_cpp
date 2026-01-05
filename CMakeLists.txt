@@ -61,8 +61,7 @@ pkg_check_modules(SECP256K1 REQUIRED libsecp256k1)
 # --- 4. Fontes v4.0 (Nova implementação) ---
 set(SOURCES
     src/main.cpp
-    src/engine.cpp
-    src/worker_v4.cpp          # v4.0: Nova implementação (3 novos modos)
+    src/worker_v4.cpp          # v4.0: Nova implementação (7 modos completos)
     src/hash160.cpp
     src/secp256k1_wrapper.cpp
     src/database.cpp
