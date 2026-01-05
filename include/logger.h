@@ -1,124 +1,79 @@
 #pragma once
 
-#include <string>
 #include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <memory>
+#include <mutex>
+#include <ctime>
 #include <iomanip>
-#include <chrono>
-#include <cstdio>
-#include <cstdarg>
 
 namespace btc_gold {
 
+// ============================================================================
+// LOGGER - Enterprise-grade Logging System
+// ============================================================================
+
 class Logger {
 public:
-    enum class Level { DEBUG, INFO, WARN, ERROR };
+    // Logging levels
+    enum class Level : uint8_t {
+        DEBUG = 0,
+        INFO = 1,
+        WARNING = 2,
+        ERROR = 3,
+        CRITICAL = 4
+    };
+
+    // Constructor: Initialize with optional file output
+    explicit Logger(const std::string& log_file = "", Level min_level = Level::INFO);
     
-    static Logger& instance();
+    // Destructor: Flush and close file
+    ~Logger();
     
-    void set_level(Level level) { current_level_ = level; }
-    void set_verbose(bool verbose) { verbose_ = verbose; }
+    // PUBLIC: Log message with level
+    void log(Level level, const std::string& message);
     
-    void debug(const std::string& msg) {
-        if (current_level_ <= Level::DEBUG && verbose_)
-            log(Level::DEBUG, msg);
-    }
+    // PUBLIC: Convenience methods for each level
+    void debug(const std::string& message);
+    void info(const std::string& message);
+    void warning(const std::string& message);
+    void error(const std::string& message);
+    void critical(const std::string& message);
     
-    void info(const std::string& msg) {
-        if (current_level_ <= Level::INFO)
-            log(Level::INFO, msg);
-    }
+    // PUBLIC: Set minimum logging level
+    void set_level(Level level) { min_level_ = level; }
     
-    void info(const std::string& format, uint64_t val) {
-        if (current_level_ <= Level::INFO) {
-            char buffer[256];
-            snprintf(buffer, sizeof(buffer), format.c_str(), val);
-            log(Level::INFO, std::string(buffer));
-        }
-    }
+    // PUBLIC: Set output file
+    void set_file(const std::string& log_file);
     
-    void info(const std::string& format, double val) {
-        if (current_level_ <= Level::INFO) {
-            char buffer[256];
-            snprintf(buffer, sizeof(buffer), format.c_str(), val);
-            log(Level::INFO, std::string(buffer));
-        }
-    }
+    // PUBLIC: Enable/disable console output
+    void enable_console(bool enable) { console_enabled_ = enable; }
     
-    void info(const std::string& format, int val) {
-        if (current_level_ <= Level::INFO) {
-            char buffer[256];
-            snprintf(buffer, sizeof(buffer), format.c_str(), val);
-            log(Level::INFO, std::string(buffer));
-        }
-    }
+    // PUBLIC: Enable/disable file output
+    void enable_file(bool enable) { file_enabled_ = enable; }
     
-    void info(const std::string& format, long val) {
-        if (current_level_ <= Level::INFO) {
-            char buffer[256];
-            snprintf(buffer, sizeof(buffer), format.c_str(), val);
-            log(Level::INFO, std::string(buffer));
-        }
-    }
-    
-    void info(const std::string& format, uint64_t val1, const char* val2) {
-        if (current_level_ <= Level::INFO) {
-            char buffer[512];
-            snprintf(buffer, sizeof(buffer), format.c_str(), val1, val2);
-            log(Level::INFO, std::string(buffer));
-        }
-    }
-    
-    void info(const std::string& format, int val1, int val2) {
-        if (current_level_ <= Level::INFO) {
-            char buffer[256];
-            snprintf(buffer, sizeof(buffer), format.c_str(), val1, val2);
-            log(Level::INFO, std::string(buffer));
-        }
-    }
-    
-    void warn(const std::string& msg) {
-        if (current_level_ <= Level::WARN)
-            log(Level::WARN, msg);
-    }
-    
-    void error(const std::string& msg) {
-        log(Level::ERROR, msg);
-    }
-    
-    void error(const std::string& format, const char* val) {
-        char buffer[512];
-        snprintf(buffer, sizeof(buffer), format.c_str(), val);
-        log(Level::ERROR, std::string(buffer));
-    }
+    // PUBLIC: Get level name
+    static const char* level_name(Level level);
     
 private:
-    Logger() = default;
-    Level current_level_ = Level::INFO;
-    bool verbose_ = true;
+    // Private implementation details
+    std::string log_file_path_;
+    std::unique_ptr<std::ofstream> log_file_;
+    mutable std::mutex mutex_;
+    Level min_level_;
+    bool console_enabled_;
+    bool file_enabled_;
     
-    void log(Level level, const std::string& msg) {
-        auto now = std::chrono::system_clock::now();
-        auto time = std::chrono::system_clock::to_time_t(now);
-        
-        std::cout << std::put_time(std::localtime(&time), "[%H:%M:%S]");
-        
-        switch(level) {
-            case Level::DEBUG:
-                std::cout << " [DEBUG] ";
-                break;
-            case Level::INFO:
-                std::cout << " [INFO] ";
-                break;
-            case Level::WARN:
-                std::cout << " [WARN] ";
-                break;
-            case Level::ERROR:
-                std::cout << " [ERROR] ";
-                break;
-        }
-        
-        std::cout << msg << std::endl;
-    }
+    // Private helper to get current timestamp
+    std::string get_timestamp() const;
+    
+    // Private helper to format message
+    std::string format_message(Level level, const std::string& message) const;
+    
+    // Private helper to write to all outputs
+    void write(Level level, const std::string& message);
 };
 
 }  // namespace btc_gold
