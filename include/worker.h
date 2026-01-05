@@ -1,76 +1,170 @@
 #pragma once
 
 #include "types.h"
-#include "config.h"
-#include "database.h"
-#include "hash160.h"
 #include "secp256k1_wrapper.h"
-#include <memory>
-#include <atomic>
+#include "database.h"
+#include "logger.h"
 #include <vector>
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <memory>
+#include <queue>
 
 namespace btc_gold {
 
-// Alinhamento de 64 bytes para evitar False Sharing entre threads
-struct alignas(64) Stats {
-    std::atomic<uint64_t> total_keys{0};
-    std::atomic<uint64_t> found_count{0};
-    std::atomic<bool> should_stop{false};
-    uint64_t start_time = 0;
+// ============================================================================
+// BATCH WRITE BUFFER - Reduz mutex contention
+// ============================================================================
+
+struct HitBuffer {
+    struct Hit {
+        PrivateKey privkey;
+        Hash160 hash160;
+        std::string address;
+        std::string wif_compressed;
+    };
     
-    // Padding para preencher a linha de cache
-    char padding[64 - (sizeof(std::atomic<uint64_t>)*2 + sizeof(std::atomic<bool>) + sizeof(uint64_t)) % 64];
+    std::vector<Hit> hits;
+    std::mutex lock;
+    static constexpr size_t MAX_HITS = 10000;
+    
+    void add(const Hit& hit) {
+        std::lock_guard<std::mutex> guard(lock);
+        hits.push_back(hit);
+    }
+    
+    bool should_flush() const {
+        return hits.size() >= MAX_HITS;
+    }
+    
+    std::vector<Hit> flush() {
+        std::lock_guard<std::mutex> guard(lock);
+        auto result = hits;
+        hits.clear();
+        return result;
+    }
 };
 
-// Buffer de hits para batch writing (evita mutex contention)
-struct FoundKey {
-    std::string address;
-    std::string privkey_hex;
-    std::string pubkey_hex;
-    std::string hash160_hex;
-    std::string wif_c;
-    std::string wif_u;
-    bool compressed;
-};
+// ============================================================================
+// WORKER ENGINE v4.0
+// ============================================================================
 
-class Worker {
+class WorkerEngine {
 public:
-    Worker(
-        int worker_id,
-        const Config& config,
-        const Database& database,
-        Stats& stats
-    );
+    WorkerEngine(const Config& config);
+    ~WorkerEngine();
     
+    // Main entry point
     void run();
     
-    // Retorna hits encontrados por este worker para batch write
-    const std::vector<FoundKey>& get_found_keys() const { return found_keys_buffer_; }
-
-private:
+    // Mode-specific implementations
     void run_linear_mode();
-    void run_linear_mode_turbo();  // v4.0: Otimização agressiva
     void run_random_mode();
     void run_geometric_mode();
     void run_terminator_mode();
-    void run_doubling_mode();      // v4.0: Novo modo (Modo 5)
-    void run_hamming_mode();       // v4.0: Novo modo otimizado (Modo 6)
-    void run_modular_stride_mode(); // v4.0: Novo modo (Modo 7)
+    void run_doubling_mode();
+    void run_hamming_mode();
+    void run_modular_stride_mode();
     
-    void check_and_save(const PrivateKey& privkey, const Hash160& hash160, bool compressed);
-    void batch_write_found_keys();  // v4.0: Escreve buffer de hits em batch
-
-    int worker_id_;
-    const Config& config_;
-    const Database& database_;
-    Stats& stats_;
+private:
+    Config config_;
+    Database database_;
+    Logger logger_;
+    Secp256k1Wrapper secp256k1_;
+    HitBuffer hit_buffer_;
     
-    std::unique_ptr<Hash160Engine> hash_engine_;
-    Secp256k1& secp256k1_ = Secp256k1::instance();
+    std::atomic<uint64_t> keys_checked_{0};
+    std::atomic<bool> should_stop_{false};
+    std::atomic<int> found_count_{0};
     
-    // v4.0: Buffer local para hits (sem mutex, apenas ao final)
-    std::vector<FoundKey> found_keys_buffer_;
-    static constexpr size_t BATCH_SIZE = 10000;  // Flush após 10k hits
+    // Worker threads
+    std::vector<std::thread> workers_;
+    
+    // ========================================================================
+    // LINEAR MODE (Turbo - Point Addition)
+    // ========================================================================
+    
+    void linear_worker_turbo(int thread_id);
+    // Point Addition: Start with privkey, then use EC tweak_add for speed
+    // Recalculate privkey ONLY on hit
+    
+    // ========================================================================
+    // RANDOM MODE
+    // ========================================================================
+    
+    void random_worker(int thread_id);
+    // Pure random search across full 256-bit space
+    
+    // ========================================================================
+    // GEOMETRIC MODE (3-Phase)
+    // ========================================================================
+    
+    void geometric_worker(int thread_id);
+    // Phase 1: Border (near range_min_bit)
+    // Phase 2: Ceiling (near range_max_bit)
+    // Phase 3: Hamming (low-weight middle)
+    
+    // ========================================================================
+    // TERMINATOR MODE (Multiplicative Descent)
+    // ========================================================================
+    
+    void terminator_worker(int thread_id);
+    // Start with large multiplier, decrease exponentially
+    // multiplier = 2 → 2^1 → 2^2 → ...
+    
+    // ========================================================================
+    // MODE 5: DOUBLING (Powers of 2)
+    // ========================================================================
+    
+    void doubling_worker();
+    // Test: 2^(min_bit-1), 2^min_bit, ..., 2^max_bit
+    // Single-threaded (only ~256 combinations max)
+    // Speed: 50M+ k/s
+    
+    // ========================================================================
+    // MODE 6: HAMMING (Low-Weight Keys)
+    // ========================================================================
+    
+    void hamming_worker();
+    // Test all 2-bit combinations: 2^bit1 + 2^bit2
+    // Range: [min_bit, max_bit]
+    // Combinatorial: C(n, 2) = n*(n-1)/2 keys
+    // Single-threaded (combinatorial enumeration)
+    
+    // ========================================================================
+    // MODE 7: MODULAR STRIDE (Arithmetic Progression)
+    // ========================================================================
+    
+    void modular_stride_worker(int thread_id);
+    // Test: start, start+multiplier, start+2*multiplier, ...
+    // Distributed by thread: each thread gets offset
+    // Thread i tests: start+i, start+i+multiplier, ...
+    // Speed: 50M+ k/s
+    
+    // ========================================================================
+    // HELPER METHODS
+    // ========================================================================
+    
+    // Check if privkey matches any target in database
+    bool check_match(const PrivateKey& privkey, const PublicKey& pubkey,
+                     const Hash160& hash160);
+    
+    // Convert privkey to address/WIF formats
+    void format_key_result(const PrivateKey& privkey, const Hash160& hash160,
+                          HitBuffer::Hit& hit);
+    
+    // Flush hits to disk
+    void flush_hits();
+    
+    // Progress reporting
+    void report_progress();
+    
+    // Initialize workers based on thread count
+    void init_workers();
+    
+    // Get stride for this thread (modular mode)
+    uint64_t get_thread_stride(int thread_id, uint64_t base_stride);
 };
 
 }  // namespace btc_gold
