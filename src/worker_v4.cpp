@@ -6,6 +6,7 @@
 #include <cmath>
 #include <algorithm>
 #include <fstream>
+#include <sstream>
 
 namespace btc_gold {
 
@@ -13,9 +14,11 @@ namespace btc_gold {
 // CONSTRUCTOR & DESTRUCTOR
 // ============================================================================
 
-WorkerEngine::WorkerEngine(const Config& config)
-    : config_(config), logger_(config.verbose), database_(config.database_file),
-      secp256k1_() {}  // Initialize secp256k1_
+WorkerEngine::WorkerEngine(const Config& config, Logger& logger, Database& database)
+    : config_(config),
+      logger_(logger),
+      database_(database),
+      secp256k1_() {}
 
 WorkerEngine::~WorkerEngine() {
     // Flush any remaining hits
@@ -36,46 +39,50 @@ WorkerEngine::~WorkerEngine() {
 void WorkerEngine::run() {
     auto start_time = std::chrono::high_resolution_clock::now();
     
-    logger_.log(Logger::Level::INFO, "[INFO] Starting BTC GOLD v4.0 EXTERMINATOR");
-    logger_.log(Logger::Level::INFO, "[INFO] Mode: " + std::to_string(config_.mode));
-    logger_.log(Logger::Level::INFO, "[INFO] Threads: " + std::to_string(
+    logger_.info("[INFO] Starting BTC GOLD v4.0 EXTERMINATOR");
+    logger_.info("[INFO] Mode: " + std::to_string(static_cast<int>(config_.mode)));
+    logger_.info("[INFO] Threads: " + std::to_string(
         config_.num_threads > 0 ? config_.num_threads : std::thread::hardware_concurrency()));
-    logger_.log(Logger::Level::INFO, "[INFO] Database: " + config_.database_file);
+    logger_.info("[INFO] Database size: " + std::to_string(database_.size()));
     
     // Dispatch to appropriate mode
-    switch (config_.mode) {
-        case Config::Mode::LINEAR:
-            run_linear_mode();
-            break;
-        case Config::Mode::RANDOM:
-            run_random_mode();
-            break;
-        case Config::Mode::GEOMETRIC:
-            run_geometric_mode();
-            break;
-        case Config::Mode::TERMINATOR:
-            run_terminator_mode();
-            break;
-        case Config::Mode::DOUBLING:
-            run_doubling_mode();
-            break;
-        case Config::Mode::HAMMING:
-            run_hamming_mode();
-            break;
-        case Config::Mode::MODULAR_STRIDE:
-            run_modular_stride_mode();
-            break;
-        default:
-            logger_.log(Logger::Level::ERROR, "[ERROR] Unknown mode: " + std::to_string(config_.mode));
-            return;
+    try {
+        switch (config_.mode) {
+            case Config::Mode::LINEAR:
+                run_linear_mode();
+                break;
+            case Config::Mode::RANDOM:
+                run_random_mode();
+                break;
+            case Config::Mode::GEOMETRIC:
+                run_geometric_mode();
+                break;
+            case Config::Mode::TERMINATOR:
+                run_terminator_mode();
+                break;
+            case Config::Mode::DOUBLING:
+                run_doubling_mode();
+                break;
+            case Config::Mode::HAMMING:
+                run_hamming_mode();
+                break;
+            case Config::Mode::MODULAR_STRIDE:
+                run_modular_stride_mode();
+                break;
+            default:
+                throw std::runtime_error("Unknown mode: " + std::to_string(static_cast<int>(config_.mode)));
+        }
+    } catch (const std::exception& e) {
+        logger_.error("[ERROR] Fatal error during scanning: " + std::string(e.what()));
+        throw;
     }
     
     auto end_time = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time);
     
-    logger_.log(Logger::Level::INFO, "[DONE] Scanning completed in " + std::to_string(duration.count()) + "s");
-    logger_.log(Logger::Level::INFO, "[RESULTS] Total keys checked: " + std::to_string(keys_checked_.load()));
-    logger_.log(Logger::Level::INFO, "[RESULTS] Matches found: " + std::to_string(found_count_.load()));
+    logger_.info("[DONE] Scanning completed in " + std::to_string(duration.count()) + "s");
+    logger_.info("[RESULTS] Total keys checked: " + std::to_string(keys_checked_.load()));
+    logger_.info("[RESULTS] Matches found: " + std::to_string(found_count_.load()));
 }
 
 // ============================================================================
@@ -83,7 +90,7 @@ void WorkerEngine::run() {
 // ============================================================================
 
 void WorkerEngine::run_linear_mode() {
-    logger_.log(Logger::Level::INFO, "[LINEAR] Initializing TURBO mode (Point Addition)");
+    logger_.info("[LINEAR] Initializing TURBO mode (Point Addition)");
     
     int num_threads = config_.num_threads > 0 ? config_.num_threads : std::thread::hardware_concurrency();
     
@@ -91,10 +98,8 @@ void WorkerEngine::run_linear_mode() {
         workers_.emplace_back(&WorkerEngine::linear_worker_turbo, this, i);
     }
     
-    // Progress reporting thread
     auto progress_thread = std::thread(&WorkerEngine::report_progress, this);
     
-    // Wait for workers
     for (auto& worker : workers_) {
         if (worker.joinable()) worker.join();
     }
@@ -107,9 +112,10 @@ void WorkerEngine::linear_worker_turbo(int thread_id) {
     try {
         // Calculate thread-specific start position
         uint64_t range = config_.end_value - config_.start_value;
-        uint64_t thread_chunk = range / std::max(1, (int)workers_.size());
+        uint64_t num_workers = std::max(1, (int)workers_.size());
+        uint64_t thread_chunk = range / num_workers;
         uint64_t start = config_.start_value + (thread_id * thread_chunk);
-        uint64_t end = (thread_id == (int)workers_.size() - 1) ? config_.end_value : start + thread_chunk;
+        uint64_t end = (thread_id == (int)num_workers - 1) ? config_.end_value : start + thread_chunk;
         
         // Initialize privkey at start position
         PrivateKey privkey;
@@ -119,41 +125,38 @@ void WorkerEngine::linear_worker_turbo(int thread_id) {
         PublicKey pubkey = secp256k1_.pubkey_compressed(privkey);
         Hash160 hash160 = secp256k1_.hash160(pubkey);
         
-        logger_.log(Logger::Level::INFO, "[T" + std::to_string(thread_id) + "] Starting at: " + std::to_string(start));
+        logger_.info("[T" + std::to_string(thread_id) + "] Starting at: " + std::to_string(start));
         
-        // MAIN LOOP - TURBO: Only hash160 per iteration
+        // MAIN LOOP
         for (uint64_t current = start; current < end && !should_stop_; current++) {
-            // 1. Check hash
+            // Check hash
             if (check_match(privkey, pubkey, hash160)) {
                 HitBuffer::Hit hit;
                 format_key_result(privkey, hash160, hit);
                 hit_buffer_.add(hit);
                 found_count_++;
+                logger_.warning("[FOUND] Match at " + std::to_string(current));
                 
                 if (config_.stop_on_find) {
                     should_stop_ = true;
                 }
             }
             
-            // 2. TURBO: Update pubkey via EC Point Addition (fast!)
-            // Instead of recalculating privkey every time
+            // Update pubkey via Point Addition (TURBO)
             secp256k1_.pubkey_tweak_add(pubkey, 1);
             hash160 = secp256k1_.hash160(pubkey);
             
-            // 3. Increment counter
             keys_checked_++;
             
-            // 4. Flush if buffer full
             if (hit_buffer_.should_flush()) {
                 flush_hits();
             }
         }
         
-        // Final flush for this thread
         flush_hits();
         
     } catch (const std::exception& e) {
-        logger_.log(Logger::Level::ERROR, "[ERROR] Linear worker " + std::to_string(thread_id) + ": " + std::string(e.what()));
+        logger_.error("[ERROR] Linear worker " + std::to_string(thread_id) + ": " + std::string(e.what()));
     }
 }
 
@@ -162,7 +165,7 @@ void WorkerEngine::linear_worker_turbo(int thread_id) {
 // ============================================================================
 
 void WorkerEngine::run_random_mode() {
-    logger_.log(Logger::Level::INFO, "[RANDOM] Full 256-bit random search");
+    logger_.info("[RANDOM] Full 256-bit random search");
     
     int num_threads = config_.num_threads > 0 ? config_.num_threads : std::thread::hardware_concurrency();
     
@@ -182,13 +185,13 @@ void WorkerEngine::run_random_mode() {
 
 void WorkerEngine::random_worker(int thread_id) {
     try {
-        std::mt19937_64 rng(std::random_device{}() + thread_id);
+        std::random_device rd;
+        std::mt19937_64 rng(rd() + thread_id);
         std::uniform_int_distribution<uint64_t> dist(0, UINT64_MAX);
         
-        logger_.log(Logger::Level::INFO, "[T" + std::to_string(thread_id) + "] Random worker started");
+        logger_.info("[T" + std::to_string(thread_id) + "] Random worker started");
         
         for (uint64_t i = 0; i < UINT64_MAX && !should_stop_; i++) {
-            // Generate random privkey
             PrivateKey privkey;
             privkey[0] = dist(rng);
             privkey[1] = dist(rng);
@@ -203,6 +206,7 @@ void WorkerEngine::random_worker(int thread_id) {
                 format_key_result(privkey, hash160, hit);
                 hit_buffer_.add(hit);
                 found_count_++;
+                logger_.warning("[FOUND] Random match found");
                 
                 if (config_.stop_on_find) {
                     should_stop_ = true;
@@ -216,7 +220,7 @@ void WorkerEngine::random_worker(int thread_id) {
             }
         }
     } catch (const std::exception& e) {
-        logger_.log(Logger::Level::ERROR, "[ERROR] Random worker: " + std::string(e.what()));
+        logger_.error("[ERROR] Random worker: " + std::string(e.what()));
     }
 }
 
@@ -225,24 +229,12 @@ void WorkerEngine::random_worker(int thread_id) {
 // ============================================================================
 
 void WorkerEngine::run_geometric_mode() {
-    logger_.log(Logger::Level::INFO, "[GEOMETRIC] 3-Phase: Border, Ceiling, Hamming");
-    
-    int num_threads = config_.num_threads > 0 ? config_.num_threads : std::thread::hardware_concurrency();
-    
-    for (int i = 0; i < num_threads; i++) {
-        workers_.emplace_back(&WorkerEngine::geometric_worker, this, i);
-    }
-    
-    for (auto& worker : workers_) {
-        if (worker.joinable()) worker.join();
-    }
+    logger_.info("[GEOMETRIC] 3-Phase: Border, Ceiling, Hamming");
+    logger_.debug("[GEOMETRIC] Geometric mode implementation pending");
 }
 
 void WorkerEngine::geometric_worker(int thread_id) {
-    // Phase 1: Border (2^(min_bit-1) to 2^min_bit)
-    // Phase 2: Ceiling (2^(max_bit-1) to 2^max_bit)
-    // Phase 3: Hamming (low-weight in middle)
-    logger_.log(Logger::Level::INFO, "[T" + std::to_string(thread_id) + "] Geometric worker");
+    logger_.info("[T" + std::to_string(thread_id) + "] Geometric worker");
 }
 
 // ============================================================================
@@ -250,21 +242,12 @@ void WorkerEngine::geometric_worker(int thread_id) {
 // ============================================================================
 
 void WorkerEngine::run_terminator_mode() {
-    logger_.log(Logger::Level::INFO, "[TERMINATOR] Multiplicative descent mode");
-    
-    int num_threads = config_.num_threads > 0 ? config_.num_threads : std::thread::hardware_concurrency();
-    
-    for (int i = 0; i < num_threads; i++) {
-        workers_.emplace_back(&WorkerEngine::terminator_worker, this, i);
-    }
-    
-    for (auto& worker : workers_) {
-        if (worker.joinable()) worker.join();
-    }
+    logger_.info("[TERMINATOR] Multiplicative descent mode");
+    logger_.debug("[TERMINATOR] Terminator mode implementation pending");
 }
 
 void WorkerEngine::terminator_worker(int thread_id) {
-    logger_.log(Logger::Level::INFO, "[T" + std::to_string(thread_id) + "] Terminator worker");
+    logger_.info("[T" + std::to_string(thread_id) + "] Terminator worker");
 }
 
 // ============================================================================
@@ -272,24 +255,19 @@ void WorkerEngine::terminator_worker(int thread_id) {
 // ============================================================================
 
 void WorkerEngine::run_doubling_mode() {
-    logger_.log(Logger::Level::INFO, "[DOUBLING] Powers of 2 mode");
-    logger_.log(Logger::Level::INFO, "[DOUBLING] Range: 2^" + std::to_string(config_.range_min_bit) + 
+    logger_.info("[DOUBLING] Powers of 2 mode");
+    logger_.info("[DOUBLING] Range: 2^" + std::to_string(config_.range_min_bit) +
                 " to 2^" + std::to_string(config_.range_max_bit));
-    
-    // Single-threaded (only ~256 combinations max)
     doubling_worker();
 }
 
 void WorkerEngine::doubling_worker() {
     try {
-        logger_.log(Logger::Level::INFO, "[DOUBLING] Starting doubling worker");
+        logger_.info("[DOUBLING] Starting doubling worker");
         
-        // Test each power of 2 in range
         for (int bit = config_.range_min_bit - 1; bit <= config_.range_max_bit && !should_stop_; bit++) {
-            // Create privkey = 2^bit
             PrivateKey privkey = {};
             
-            // Set bit at position 'bit'
             int byte_idx = bit / 8;
             int bit_idx = bit % 8;
             if (byte_idx < 32) {
@@ -304,7 +282,7 @@ void WorkerEngine::doubling_worker() {
                 format_key_result(privkey, hash160, hit);
                 hit_buffer_.add(hit);
                 found_count_++;
-                logger_.log(Logger::Level::INFO, "[FOUND] 2^" + std::to_string(bit));
+                logger_.warning("[FOUND] 2^" + std::to_string(bit));
                 
                 if (config_.stop_on_find) {
                     should_stop_ = true;
@@ -315,10 +293,10 @@ void WorkerEngine::doubling_worker() {
         }
         
         flush_hits();
-        logger_.log(Logger::Level::INFO, "[DOUBLING] Complete");
+        logger_.info("[DOUBLING] Complete");
         
     } catch (const std::exception& e) {
-        logger_.log(Logger::Level::ERROR, "[ERROR] Doubling worker: " + std::string(e.what()));
+        logger_.error("[ERROR] Doubling worker: " + std::string(e.what()));
     }
 }
 
@@ -327,24 +305,21 @@ void WorkerEngine::doubling_worker() {
 // ============================================================================
 
 void WorkerEngine::run_hamming_mode() {
-    logger_.log(Logger::Level::INFO, "[HAMMING] Low-weight key search (2-bit combinations)");
-    logger_.log(Logger::Level::INFO, "[HAMMING] Range: bits " + std::to_string(config_.range_min_bit) + 
+    logger_.info("[HAMMING] Low-weight key search (2-bit combinations)");
+    logger_.info("[HAMMING] Range: bits " + std::to_string(config_.range_min_bit) +
                 " to " + std::to_string(config_.range_max_bit));
-    
     hamming_worker();
 }
 
 void WorkerEngine::hamming_worker() {
     try {
-        logger_.log(Logger::Level::INFO, "[HAMMING] Starting hamming worker");
+        logger_.info("[HAMMING] Starting hamming worker");
         
         int min_bit = config_.range_min_bit;
         int max_bit = config_.range_max_bit;
         
-        // Test all 2-bit combinations
         for (int bit1 = min_bit; bit1 <= max_bit && !should_stop_; bit1++) {
             for (int bit2 = bit1 + 1; bit2 <= max_bit && !should_stop_; bit2++) {
-                // Create privkey = 2^bit1 + 2^bit2
                 PrivateKey privkey = {};
                 
                 if (bit1 < 256) {
@@ -367,7 +342,7 @@ void WorkerEngine::hamming_worker() {
                     format_key_result(privkey, hash160, hit);
                     hit_buffer_.add(hit);
                     found_count_++;
-                    logger_.log(Logger::Level::INFO, "[FOUND] 2^" + std::to_string(bit1) + " + 2^" + std::to_string(bit2));
+                    logger_.warning("[FOUND] 2^" + std::to_string(bit1) + " + 2^" + std::to_string(bit2));
                     
                     if (config_.stop_on_find) {
                         should_stop_ = true;
@@ -379,10 +354,10 @@ void WorkerEngine::hamming_worker() {
         }
         
         flush_hits();
-        logger_.log(Logger::Level::INFO, "[HAMMING] Complete");
+        logger_.info("[HAMMING] Complete");
         
     } catch (const std::exception& e) {
-        logger_.log(Logger::Level::ERROR, "[ERROR] Hamming worker: " + std::string(e.what()));
+        logger_.error("[ERROR] Hamming worker: " + std::string(e.what()));
     }
 }
 
@@ -391,8 +366,8 @@ void WorkerEngine::hamming_worker() {
 // ============================================================================
 
 void WorkerEngine::run_modular_stride_mode() {
-    logger_.log(Logger::Level::INFO, "[MODULAR_STRIDE] Arithmetic progression mode");
-    logger_.log(Logger::Level::INFO, "[MODULAR_STRIDE] Start: " + std::to_string(config_.start_value) + 
+    logger_.info("[MODULAR_STRIDE] Arithmetic progression mode");
+    logger_.info("[MODULAR_STRIDE] Start: " + std::to_string(config_.start_value) +
                 ", Multiplier: " + std::to_string(config_.multiplier));
     
     int num_threads = config_.num_threads > 0 ? config_.num_threads : std::thread::hardware_concurrency();
@@ -413,9 +388,9 @@ void WorkerEngine::run_modular_stride_mode() {
 
 void WorkerEngine::modular_stride_worker(int thread_id) {
     try {
-        logger_.log(Logger::Level::INFO, "[T" + std::to_string(thread_id) + "] Modular stride worker started");
+        logger_.info("[T" + std::to_string(thread_id) + "] Modular stride worker started");
         
-        uint64_t offset = thread_id;  // Each thread gets different offset
+        uint64_t offset = thread_id;
         uint64_t current = config_.start_value + offset;
         
         while (current <= config_.end_value && !should_stop_) {
@@ -430,6 +405,7 @@ void WorkerEngine::modular_stride_worker(int thread_id) {
                 format_key_result(privkey, hash160, hit);
                 hit_buffer_.add(hit);
                 found_count_++;
+                logger_.warning("[FOUND] Match at " + std::to_string(current));
                 
                 if (config_.stop_on_find) {
                     should_stop_ = true;
@@ -442,14 +418,13 @@ void WorkerEngine::modular_stride_worker(int thread_id) {
                 flush_hits();
             }
             
-            // Move to next in arithmetic sequence
             current += config_.multiplier;
         }
         
         flush_hits();
         
     } catch (const std::exception& e) {
-        logger_.log(Logger::Level::ERROR, "[ERROR] Modular stride worker: " + std::string(e.what()));
+        logger_.error("[ERROR] Modular stride worker: " + std::string(e.what()));
     }
 }
 
@@ -459,7 +434,6 @@ void WorkerEngine::modular_stride_worker(int thread_id) {
 
 bool WorkerEngine::check_match(const PrivateKey& privkey, const PublicKey& pubkey,
                                const Hash160& hash160) {
-    // Database::contains expects Hash160 only
     return database_.contains(hash160);
 }
 
@@ -477,20 +451,20 @@ void WorkerEngine::flush_hits() {
     if (!hits.empty()) {
         std::lock_guard<std::mutex> guard(hit_buffer_.lock);
         
-        // Write to file
         std::ofstream outfile(config_.output_file, std::ios::app);
+        if (!outfile.is_open()) {
+            logger_.error("Cannot open output file: " + config_.output_file);
+            return;
+        }
         
         for (const auto& hit : hits) {
             outfile << hit.address << "|" 
                    << hit.wif_compressed << "|" 
-                   << "" << "\n";  // Additional fields
+                   << "" << "\n";
         }
         
         outfile.close();
-        
-        if (config_.verbose) {
-            logger_.log(Logger::Level::INFO, "[FLUSH] Wrote " + std::to_string(hits.size()) + " hits");
-        }
+        logger_.debug("Flushed " + std::to_string(hits.size()) + " hits");
     }
 }
 
@@ -504,9 +478,9 @@ void WorkerEngine::report_progress() {
         auto rate = current_keys - last_keys;
         
         if (config_.verbose) {
-            logger_.log(Logger::Level::INFO, "[PROGRESS] Speed: " + std::to_string(rate / 1000000) + "M k/s | " +
-                       "Total: " + std::to_string(current_keys / 1000000) + "M keys | " +
-                       "Found: " + std::to_string(found_count_.load()));
+            logger_.debug("[PROGRESS] Speed: " + std::to_string(rate / 1000000) + "M k/s | " +
+                         "Total: " + std::to_string(current_keys / 1000000) + "M keys | " +
+                         "Found: " + std::to_string(found_count_.load()));
         }
         
         last_keys = current_keys;
