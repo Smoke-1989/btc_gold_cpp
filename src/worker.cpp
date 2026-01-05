@@ -67,13 +67,31 @@ inline void big_int_power_of_2_to_privkey(int power, PrivateKey& privkey) {
     }
 }
 
-// Soma um inteiro de 64 bits (delta) em uma chave privada (little-endian nos 8 bytes finais)
+// Soma um inteiro de 64 bits (delta) em uma chave privada (big-endian, operando nos bytes finais)
 inline void add_uint64_to_privkey(PrivateKey& privkey, uint64_t delta) {
     int i = 31;
     while (delta > 0 && i >= 0) {
         uint64_t sum = static_cast<uint64_t>(privkey[i]) + (delta & 0xFFULL);
         privkey[i]   = static_cast<uint8_t>(sum & 0xFFULL);
-        delta        = (delta >> 8) + (sum >> 8);
+        delta        = (delta >> 8) + (sum >> 8); // carrega para o próximo byte
+        --i;
+    }
+}
+
+// Subtrai um inteiro de 64 bits (delta) de uma chave privada (big-endian)
+inline void sub_uint64_from_privkey(PrivateKey& privkey, uint64_t delta) {
+    int i = 31;
+    while (delta > 0 && i >= 0) {
+        uint64_t byte = privkey[i];
+        uint64_t sub  = (delta & 0xFFULL);
+        if (byte >= sub) {
+            privkey[i] = static_cast<uint8_t>(byte - sub);
+            delta      = (delta >> 8); // sem empréstimo extra
+        } else {
+            uint64_t res = (byte + 256ULL) - sub;
+            privkey[i]   = static_cast<uint8_t>(res & 0xFFULL);
+            delta        = (delta >> 8) + 1; // empresta 1 para o próximo byte
+        }
         --i;
     }
 }
@@ -178,7 +196,7 @@ void Worker::run_geometric_mode() {
     if (max_bit > 255) max_bit = 255;
     if (min_bit > max_bit) return;
 
-    // Tamanho da "fronteira" em cada bit (Border Patrol)
+    // Tamanho da "fronteira" em cada bit (Border / Ceiling Patrol)
     const uint64_t WINDOW = 1000000ULL; // 1 milhão de chaves por bit
 
     uint64_t stride_val = config_.num_threads * config_.stride;
@@ -201,7 +219,7 @@ void Worker::run_geometric_mode() {
     std::vector<uint8_t> pubkey_c, pubkey_u;
 
     // -----------------------------
-    // FASE 1: BORDER PATROL POR BIT
+    // FASE 1: BORDER PATROL POR BIT (início do intervalo N bits)
     // -----------------------------
     for (int bit = min_bit + worker_id_; bit <= max_bit; bit += config_.num_threads) {
         if (stats_.should_stop) break;
@@ -258,7 +276,68 @@ void Worker::run_geometric_mode() {
     }
 
     // ----------------------------------------
-    // FASE 2: LOW HAMMING WEIGHT (2 bits ligados)
+    // FASE 2: CEILING PATROL (fim do intervalo N bits)
+    // ----------------------------------------
+    if (worker_id_ == 0) {
+        Logger::instance().info("[GEOMETRIC] Ceiling Patrol: ativado");
+    }
+
+    for (int bit = min_bit + worker_id_; bit <= max_bit; bit += config_.num_threads) {
+        if (stats_.should_stop) break;
+
+        // Para bits muito baixos, o range total é menor que WINDOW; a Border Patrol já cobre tudo.
+        // Evita underflow ao tentar 2^bit - WINDOW.
+        if (bit < 20) continue;
+
+        // Topo lógico do intervalo de N bits é ~2^bit. Queremos começar em ~2^bit - WINDOW
+        PrivateKey top_base_priv;
+        big_int_power_of_2_to_privkey(bit, top_base_priv); // ~2^bit
+        sub_uint64_from_privkey(top_base_priv, WINDOW);     // ~2^bit - WINDOW
+
+        current_priv = top_base_priv;
+        add_uint64_to_privkey(current_priv, static_cast<uint64_t>(worker_id_));
+
+        pubkey_c.clear();
+        pubkey_u.clear();
+
+        if (config_.scan_mode != Config::ScanMode::UNCOMPRESSED) {
+            auto pk = secp256k1_.pubkey_compressed(current_priv);
+            pubkey_c.assign(pk.begin(), pk.end());
+        }
+        if (config_.scan_mode != Config::ScanMode::COMPRESSED) {
+            pubkey_u = secp256k1_.pubkey_uncompressed(current_priv);
+        }
+
+        if (pubkey_c.empty() && pubkey_u.empty()) continue;
+
+        if (static_cast<uint64_t>(worker_id_) >= WINDOW) continue;
+        uint64_t max_index = WINDOW - 1;
+        uint64_t remaining = ((max_index - static_cast<uint64_t>(worker_id_)) / stride_val) + 1;
+
+        while (!stats_.should_stop && remaining--) {
+            if (!pubkey_c.empty()) {
+                auto hash = hash_engine_->compute(pubkey_c);
+                if (database_.contains(hash)) {
+                    check_and_save(current_priv, hash, true);
+                }
+                secp256k1_.pubkey_tweak_add(pubkey_c, tweak);
+            }
+
+            if (!pubkey_u.empty()) {
+                auto hash = hash_engine_->compute(pubkey_u);
+                if (database_.contains(hash)) {
+                    check_and_save(current_priv, hash, false);
+                }
+                secp256k1_.pubkey_tweak_add(pubkey_u, tweak);
+            }
+
+            add_uint64_to_privkey(current_priv, stride_val);
+            stats_.total_keys++;
+        }
+    }
+
+    // ----------------------------------------
+    // FASE 3: LOW HAMMING WEIGHT (2 bits ligados)
     // ----------------------------------------
     // Para evitar explosão combinatória, apenas a thread 0 executa.
     if (worker_id_ == 0) {
