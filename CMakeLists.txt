@@ -15,7 +15,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         -funroll-loops
         -fomit-frame-pointer
         -ffast-math
-        -flto
+        # -flto  <-- REMOVED: LTO breaks CUDA fatbin linking in GCC
         -Wall                  # v4.0: Mostrar todos warnings
         -Wextra                # v4.0: Extra warnings
         -Wpedantic             # v4.0: Strict C++ compliance
@@ -126,6 +126,6 @@ add_custom_target(clean-build
 )
 
 message(STATUS ">>> BUILD v4.0 EXTERMINATOR: READY <<<")
-message(STATUS ">>> CPU Flags: -march=native + LTO + AVX2/AVX512 <<<")
+message(STATUS ">>> CPU Flags: -march=native + AVX2/AVX512 (LTO Disabled) <<<")
 message(STATUS ">>> New Modes: DOUBLING (5) + HAMMING (6) + MODULAR_STRIDE (7) <<<")
 message(STATUS ">>> Performance: Linear Mode Turbo + Batch Write <<<")
