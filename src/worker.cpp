@@ -56,16 +56,35 @@ inline void int128_to_privkey(unsigned __int128 val, PrivateKey& privkey) {
     }
 }
 
-// Overload for 256-bit support (BigInt simulation for Geometric Mode)
-// Geometric mode can reach high powers, so we need a robust conversion.
-// For now, limited to 128-bit range for safety, but can be easily expanded.
-// This function assumes val is within 128-bit limits.
+// Representa 2^power em formato de chave privada (32 bytes, big-endian)
 inline void big_int_power_of_2_to_privkey(int power, PrivateKey& privkey) {
     std::fill(privkey.begin(), privkey.end(), 0);
+    if (power < 0) return;
     int byte_index = power / 8;
-    int bit_index = power % 8;
+    int bit_index  = power % 8;
     if (byte_index < 32) {
-        privkey[31 - byte_index] = (1 << bit_index);
+        privkey[31 - byte_index] = static_cast<uint8_t>(1 << bit_index);
+    }
+}
+
+// Soma um inteiro de 64 bits (delta) em uma chave privada (little-endian nos 8 bytes finais)
+inline void add_uint64_to_privkey(PrivateKey& privkey, uint64_t delta) {
+    int i = 31;
+    while (delta > 0 && i >= 0) {
+        uint64_t sum = static_cast<uint64_t>(privkey[i]) + (delta & 0xFFULL);
+        privkey[i]   = static_cast<uint8_t>(sum & 0xFFULL);
+        delta        = (delta >> 8) + (sum >> 8);
+        --i;
+    }
+}
+
+// Seta um bit específico (2^power) dentro da chave privada
+inline void set_bit_in_privkey(int power, PrivateKey& privkey) {
+    if (power < 0) return;
+    int byte_index = power / 8;
+    int bit_index  = power % 8;
+    if (byte_index < 32) {
+        privkey[31 - byte_index] |= static_cast<uint8_t>(1 << bit_index);
     }
 }
 
@@ -148,41 +167,136 @@ void Worker::run_random_mode() {
 }
 
 void Worker::run_geometric_mode() {
-    int current_bit = config_.range_min_bit;
+    // Bits configurados pelo usuário (pensando em puzzles: 66, 67, 68...)
+    int min_bit = config_.range_min_bit;
     int max_bit = config_.range_max_bit;
-    
-    // SAFETY LIMIT: Bitcoin curve order is slightly less than 2^256.
-    // Bit 256 overflows. Max safe bit index is 255.
+
+    if (min_bit < 1) min_bit = 1;
+    if (max_bit <= 0) return;
+
+    // Curva secp256k1 ~ 2^256, então bit 256 já estoura
     if (max_bit > 255) max_bit = 255;
-    
+    if (min_bit > max_bit) return;
+
+    // Tamanho da "fronteira" em cada bit (Border Patrol)
+    const uint64_t WINDOW = 1000000ULL; // 1 milhão de chaves por bit
+
+    uint64_t stride_val = config_.num_threads * config_.stride;
+    if (stride_val == 0) stride_val = config_.num_threads;
+    if (stride_val == 0) stride_val = 1;
+
     if (worker_id_ == 0) {
-        Logger::instance().info("[GEOMETRIC] Scanning powers of 2 from 2^" + std::to_string(current_bit) + " to 2^" + std::to_string(max_bit));
+        std::stringstream ss;
+        ss << "[GEOMETRIC] Border Patrol: bits " << min_bit << " a " << max_bit
+           << " | janela " << WINDOW << " chaves por bit";
+        Logger::instance().info(ss.str());
     }
 
-    PrivateKey privkey_bytes;
+    // Tweak para incremento constante na chave (igual ao Linear Mode)
+    uint8_t tweak[32] = {0};
+    for (int i = 0; i < 8; ++i) tweak[31 - i] = (stride_val >> (i * 8)) & 0xFFULL;
+
+    PrivateKey base_priv;
+    PrivateKey current_priv;
     std::vector<uint8_t> pubkey_c, pubkey_u;
-    
-    // Distribute bits among threads
-    for (int b = current_bit + worker_id_; b <= max_bit; b += config_.num_threads) {
+
+    // -----------------------------
+    // FASE 1: BORDER PATROL POR BIT
+    // -----------------------------
+    for (int bit = min_bit + worker_id_; bit <= max_bit; bit += config_.num_threads) {
         if (stats_.should_stop) break;
 
-        // DEBUG: Uncomment line below to see exactly what each thread is doing
-        // Logger::instance().info("[DEBUG] Thread " + std::to_string(worker_id_) + " checking 2^" + std::to_string(b));
-        
-        big_int_power_of_2_to_privkey(b, privkey_bytes);
-        
+        // Para um puzzle de N bits, o range começa em 2^(N-1)
+        int base_power = bit - 1;
+        if (base_power < 0) base_power = 0;
+
+        // Base = 2^(base_power)
+        big_int_power_of_2_to_privkey(base_power, base_priv);
+        // Offset por thread (cada worker começa em base + worker_id_)
+        current_priv = base_priv;
+        add_uint64_to_privkey(current_priv, static_cast<uint64_t>(worker_id_));
+
+        pubkey_c.clear();
+        pubkey_u.clear();
+
         if (config_.scan_mode != Config::ScanMode::UNCOMPRESSED) {
-            auto pk = secp256k1_.pubkey_compressed(privkey_bytes);
+            auto pk = secp256k1_.pubkey_compressed(current_priv);
             pubkey_c.assign(pk.begin(), pk.end());
-            auto hash = hash_engine_->compute(pubkey_c);
-            if (database_.contains(hash)) check_and_save(privkey_bytes, hash, true);
         }
         if (config_.scan_mode != Config::ScanMode::COMPRESSED) {
-            pubkey_u = secp256k1_.pubkey_uncompressed(privkey_bytes);
-            auto hash = hash_engine_->compute(pubkey_u);
-            if (database_.contains(hash)) check_and_save(privkey_bytes, hash, false);
+            pubkey_u = secp256k1_.pubkey_uncompressed(current_priv);
         }
-        stats_.total_keys++;
+
+        if (pubkey_c.empty() && pubkey_u.empty()) continue;
+
+        // Cada thread cobre índices: i = worker_id_, worker_id_ + stride_val, ... < WINDOW
+        if (static_cast<uint64_t>(worker_id_) >= WINDOW) continue;
+        uint64_t max_index = WINDOW - 1;
+        uint64_t remaining = ((max_index - static_cast<uint64_t>(worker_id_)) / stride_val) + 1;
+
+        while (!stats_.should_stop && remaining--) {
+            if (!pubkey_c.empty()) {
+                auto hash = hash_engine_->compute(pubkey_c);
+                if (database_.contains(hash)) {
+                    check_and_save(current_priv, hash, true);
+                }
+                secp256k1_.pubkey_tweak_add(pubkey_c, tweak);
+            }
+
+            if (!pubkey_u.empty()) {
+                auto hash = hash_engine_->compute(pubkey_u);
+                if (database_.contains(hash)) {
+                    check_and_save(current_priv, hash, false);
+                }
+                secp256k1_.pubkey_tweak_add(pubkey_u, tweak);
+            }
+
+            // Avança a chave privada em "stride_val" para manter consistência com o pubkey
+            add_uint64_to_privkey(current_priv, stride_val);
+            stats_.total_keys++;
+        }
+    }
+
+    // ----------------------------------------
+    // FASE 2: LOW HAMMING WEIGHT (2 bits ligados)
+    // ----------------------------------------
+    // Para evitar explosão combinatória, apenas a thread 0 executa.
+    if (worker_id_ == 0) {
+        const int MAX_SECOND_BITS = 32; // limita os segundos bits mais baixos avaliados
+
+        std::stringstream ss;
+        ss << "[GEOMETRIC] Low Hamming Weight: ativado (ate " << MAX_SECOND_BITS
+           << " bits baixos por faixa)";
+        Logger::instance().info(ss.str());
+
+        for (int bit = min_bit; bit <= max_bit && !stats_.should_stop; ++bit) {
+            int base_power = bit - 1;
+            if (base_power < 0) base_power = 0;
+
+            int max_k = std::min(base_power, MAX_SECOND_BITS);
+            for (int k = 0; k <= max_k && !stats_.should_stop; ++k) {
+                PrivateKey hw_priv;
+                std::fill(hw_priv.begin(), hw_priv.end(), 0);
+                set_bit_in_privkey(base_power, hw_priv);
+                set_bit_in_privkey(k, hw_priv);
+
+                if (config_.scan_mode != Config::ScanMode::UNCOMPRESSED) {
+                    auto pk = secp256k1_.pubkey_compressed(hw_priv);
+                    pubkey_c.assign(pk.begin(), pk.end());
+                    auto hash = hash_engine_->compute(pubkey_c);
+                    if (database_.contains(hash)) check_and_save(hw_priv, hash, true);
+                }
+
+                if (config_.scan_mode != Config::ScanMode::COMPRESSED) {
+                    auto pk = secp256k1_.pubkey_uncompressed(hw_priv);
+                    pubkey_u = std::move(pk);
+                    auto hash = hash_engine_->compute(pubkey_u);
+                    if (database_.contains(hash)) check_and_save(hw_priv, hash, false);
+                }
+
+                stats_.total_keys++;
+            }
+        }
     }
 }
 
