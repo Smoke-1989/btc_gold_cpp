@@ -10,9 +10,9 @@ namespace btc_gold {
 // FUNDAMENTAL TYPES
 // ============================================================================
 
-using Hash160 = std::array<uint8_t, 20>;  // 160-bit hash
-using PrivateKey = std::array<uint8_t, 32>; // 256-bit private key
-using PublicKey = std::array<uint8_t, 33>;  // 33-byte compressed public key
+using Hash160 = std::array<uint8_t, 20>;      // 160-bit hash
+using PrivateKey = std::array<uint8_t, 32>;   // 256-bit private key
+using PublicKey = std::array<uint8_t, 33>;    // 33-byte compressed public key
 
 // ============================================================================
 // KEY RESULT
@@ -29,46 +29,73 @@ struct KeyResult {
 };
 
 // ============================================================================
-// CONFIGURATION
+// CONFIGURATION v4.0 EXTERMINATOR
 // ============================================================================
 
 struct Config {
-    // Operation mode
+    // ========================================================================
+    // OPERATION MODES (1-7)
+    // ========================================================================
     enum Mode { 
-        LINEAR = 1, 
-        RANDOM = 2, 
-        GEOMETRIC = 3,
-        TERMINATOR = 4  // <--- O EXTERMINADOR DO FUTURO
+        LINEAR = 1,              // Seqüêncial (+1, +1, +1...)
+        RANDOM = 2,              // Aleatório puro
+        GEOMETRIC = 3,            // 3 fases: Border, Ceiling, Hamming
+        TERMINATOR = 4,           // Multiplicação regressiva
+        DOUBLING = 5,             // v4.0: Multiplicação por 2 (logaritmo)
+        HAMMING = 6,              // v4.0: Baixo peso de bits (2-3 bits)
+        MODULAR_STRIDE = 7        // v4.0: Padrão customizado (k+m, k+2m...)
     };
     Mode mode = LINEAR;
     
-    // Database input type
-    enum InputType { ADDRESS = 1, HASH160 = 2, PUBKEY = 3 };
+    // ========================================================================
+    // DATABASE INPUT TYPE
+    // ========================================================================
+    enum InputType { 
+        ADDRESS = 1,      // Endereços Bitcoin (1A1z...)
+        HASH160 = 2,      // HASH160 hex puro (40 chars)
+        PUBKEY = 3        // Public Keys (02/03/04...)
+    };
     InputType input_type = ADDRESS;
     
-    // Scan mode
-    enum ScanMode { COMPRESSED = 1, UNCOMPRESSED = 2, BOTH = 3 };
+    // ========================================================================
+    // SCAN MODE (Comprimido/Descomprimido)
+    // ========================================================================
+    enum ScanMode { 
+        COMPRESSED = 1,        // 33 bytes (02/03 prefix)
+        UNCOMPRESSED = 2,      // 65 bytes (04 prefix)
+        BOTH = 3               // Ambos (mais lento)
+    };
     ScanMode scan_mode = COMPRESSED;
     
-    // Parameters
-    uint64_t start_value = 1;
-    uint64_t end_value = 0xFFFFFFFFFFFFFFFF;
+    // ========================================================================
+    // PARÂMETROS DE RANGE
+    // ========================================================================
+    uint64_t start_value = 1;              // Início do range (mode LINEAR/RANDOM)
+    uint64_t end_value = 0xFFFFFFFFFFFFFF;  // Fim do range
     
-    // Terminator Mode Specifics
-    uint64_t multiplier = 2; // Initial Salto
-    int range_min_bit = 1;   // Start Bit (e.g. 66)
-    int range_max_bit = 256; // End Bit (e.g. 67)
+    int range_min_bit = 1;    // Bit mínimo (modo GEOMETRIC/HAMMING/DOUBLING)
+    int range_max_bit = 256;   // Bit máximo
     
-    uint64_t stride = 1;
+    uint64_t multiplier = 2;   // Fator multiplicador (TERMINATOR/DOUBLING/MODULAR_STRIDE)
+    uint64_t stride = 1;       // Passo entre threads (LINEAR)
     
-    // Threading
-    int num_threads = 0;  // 0 = auto-detect
+    // ========================================================================
+    // THREADING & PERFORMANCE
+    // ========================================================================
+    int num_threads = 0;       // 0 = auto-detect
+    bool turbo_mode = true;    // v4.0: Ativa otimização agressiva no LINEAR
+    bool batch_write = true;   // v4.0: Escreve hits em lote (menos mutex)
     
-    // Behavior
-    bool stop_on_find = false;
-    bool verbose = true;
+    // ========================================================================
+    // COMPORTAMENTO
+    // ========================================================================
+    bool stop_on_find = false;  // Para ao encontrar primeira chave
+    bool verbose = true;        // Logs detalhados
+    bool use_gpu = false;       // v4.0: Usa GPU se disponível (futuro)
     
-    // Files
+    // ========================================================================
+    // ARQUIVOS
+    // ========================================================================
     std::string database_file = "alvos.txt";
     std::string output_file = "found_gold.txt";
 };
