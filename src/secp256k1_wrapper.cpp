@@ -2,6 +2,7 @@
 #include <secp256k1.h>
 #include <secp256k1_recovery.h>
 #include <cstring>
+#include <stdexcept>
 #include <openssl/sha.h>
 #include <openssl/evp.h>
 #include <openssl/ripemd.h>
@@ -13,17 +14,18 @@ namespace btc_gold {
 static const char* BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 Secp256k1Wrapper::Secp256k1Wrapper() {
-    context_ = secp256k1_context_create(
+    ctx_ = secp256k1_context_create(
         SECP256K1_CONTEXT_VERIFY | SECP256K1_CONTEXT_SIGN
     );
-    if (!context_) {
+    if (!ctx_) {
         throw std::runtime_error("Failed to create secp256k1 context");
     }
 }
 
 Secp256k1Wrapper::~Secp256k1Wrapper() {
-    if (context_) {
-        secp256k1_context_destroy(context_);
+    if (ctx_) {
+        secp256k1_context_destroy(ctx_);
+        ctx_ = nullptr;
     }
 }
 
@@ -35,13 +37,13 @@ PublicKey Secp256k1Wrapper::pubkey_compressed(const PrivateKey& privkey) const {
     PublicKey result;
     secp256k1_pubkey pubkey;
     
-    if (!secp256k1_ec_pubkey_create(context_, &pubkey, privkey.data())) {
+    if (!secp256k1_ec_pubkey_create(ctx_, &pubkey, privkey.data())) {
         throw std::runtime_error("Failed to create public key");
     }
     
     size_t output_len = 33;
     if (!secp256k1_ec_pubkey_serialize(
-        context_,
+        ctx_,
         result.data(),
         &output_len,
         &pubkey,
@@ -56,13 +58,13 @@ std::vector<uint8_t> Secp256k1Wrapper::pubkey_uncompressed(const PrivateKey& pri
     std::vector<uint8_t> result(65);
     secp256k1_pubkey pubkey;
     
-    if (!secp256k1_ec_pubkey_create(context_, &pubkey, privkey.data())) {
+    if (!secp256k1_ec_pubkey_create(ctx_, &pubkey, privkey.data())) {
         throw std::runtime_error("Failed to create public key");
     }
     
     size_t output_len = 65;
     if (!secp256k1_ec_pubkey_serialize(
-        context_,
+        ctx_,
         result.data(),
         &output_len,
         &pubkey,
@@ -74,7 +76,7 @@ std::vector<uint8_t> Secp256k1Wrapper::pubkey_uncompressed(const PrivateKey& pri
 }
 
 bool Secp256k1Wrapper::verify_privkey(const PrivateKey& privkey) const {
-    return secp256k1_ec_seckey_verify(context_, privkey.data());
+    return secp256k1_ec_seckey_verify(ctx_, privkey.data());
 }
 
 // ============================================================================
@@ -86,7 +88,7 @@ bool Secp256k1Wrapper::pubkey_tweak_add(PublicKey& pubkey_bytes, int increment) 
         secp256k1_pubkey pubkey;
         
         // Parse current pubkey
-        if (!secp256k1_ec_pubkey_parse(context_, &pubkey, pubkey_bytes.data(), pubkey_bytes.size())) {
+        if (!secp256k1_ec_pubkey_parse(ctx_, &pubkey, pubkey_bytes.data(), pubkey_bytes.size())) {
             return false;
         }
         
@@ -100,14 +102,14 @@ bool Secp256k1Wrapper::pubkey_tweak_add(PublicKey& pubkey_bytes, int increment) 
         }
         
         // Add tweak (scalar) to point
-        if (!secp256k1_ec_pubkey_tweak_add(context_, &pubkey, tweak)) {
+        if (!secp256k1_ec_pubkey_tweak_add(ctx_, &pubkey, tweak)) {
             return false;
         }
         
         // Serialize back (compressed)
         size_t len = 33;
         if (!secp256k1_ec_pubkey_serialize(
-            context_, 
+            ctx_, 
             pubkey_bytes.data(), 
             &len, 
             &pubkey, 
@@ -139,11 +141,29 @@ Hash160 Secp256k1Wrapper::hash160(const PublicKey& pubkey) const {
     // For OpenSSL 3.0+, use EVP interface
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
     EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
-    EVP_DigestInit_ex(mdctx, EVP_ripemd160(), NULL);
-    EVP_DigestUpdate(mdctx, sha256_hash, SHA256_DIGEST_LENGTH);
+    if (!mdctx) {
+        throw std::runtime_error("Failed to create EVP context");
+    }
+    
+    int ret = EVP_DigestInit_ex(mdctx, EVP_ripemd160(), NULL);
+    if (ret != 1) {
+        EVP_MD_CTX_free(mdctx);
+        throw std::runtime_error("Failed to initialize RIPEMD160");
+    }
+    
+    ret = EVP_DigestUpdate(mdctx, sha256_hash, SHA256_DIGEST_LENGTH);
+    if (ret != 1) {
+        EVP_MD_CTX_free(mdctx);
+        throw std::runtime_error("Failed to update RIPEMD160");
+    }
+    
     unsigned int md_len;
-    EVP_DigestFinal_ex(mdctx, ripemd160_hash, &md_len);
+    ret = EVP_DigestFinal_ex(mdctx, ripemd160_hash, &md_len);
     EVP_MD_CTX_free(mdctx);
+    
+    if (ret != 1 || md_len != 20) {
+        throw std::runtime_error("Failed to finalize RIPEMD160");
+    }
 #else
     RIPEMD160(sha256_hash, SHA256_DIGEST_LENGTH, ripemd160_hash);
 #endif
@@ -164,11 +184,29 @@ Hash160 Secp256k1Wrapper::hash160_of_hash160(const Hash160& hash) const {
     
 #if OPENSSL_VERSION_NUMBER >= 0x30000000L
     EVP_MD_CTX *mdctx = EVP_MD_CTX_new();
-    EVP_DigestInit_ex(mdctx, EVP_ripemd160(), NULL);
-    EVP_DigestUpdate(mdctx, sha256_hash, SHA256_DIGEST_LENGTH);
+    if (!mdctx) {
+        throw std::runtime_error("Failed to create EVP context");
+    }
+    
+    int ret = EVP_DigestInit_ex(mdctx, EVP_ripemd160(), NULL);
+    if (ret != 1) {
+        EVP_MD_CTX_free(mdctx);
+        throw std::runtime_error("Failed to initialize RIPEMD160");
+    }
+    
+    ret = EVP_DigestUpdate(mdctx, sha256_hash, SHA256_DIGEST_LENGTH);
+    if (ret != 1) {
+        EVP_MD_CTX_free(mdctx);
+        throw std::runtime_error("Failed to update RIPEMD160");
+    }
+    
     unsigned int md_len;
-    EVP_DigestFinal_ex(mdctx, ripemd160_hash, &md_len);
+    ret = EVP_DigestFinal_ex(mdctx, ripemd160_hash, &md_len);
     EVP_MD_CTX_free(mdctx);
+    
+    if (ret != 1 || md_len != 20) {
+        throw std::runtime_error("Failed to finalize RIPEMD160");
+    }
 #else
     RIPEMD160(sha256_hash, SHA256_DIGEST_LENGTH, ripemd160_hash);
 #endif
