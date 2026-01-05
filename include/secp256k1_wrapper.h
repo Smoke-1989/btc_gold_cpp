@@ -89,10 +89,10 @@ public:
     // CONTEXT ACCESS
     // ========================================================================
     
-    secp256k1_context* get_context() const { return context_; }
+    secp256k1_context* get_context() const { return ctx_; }
 
 private:
-    secp256k1_context* context_;
+    secp256k1_context* ctx_;  // FIXED: Use ctx_ consistently
 };
 
 }  // namespace btc_gold
