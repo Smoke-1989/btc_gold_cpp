@@ -1,5 +1,6 @@
 #pragma once
 
+#include "config.h"
 #include "types.h"
 #include "logger.h"
 #include <unordered_set>
