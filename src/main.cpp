@@ -1,60 +1,100 @@
-#include "engine.h"
 #include "config.h"
 #include "logger.h"
+#include "database.h"
+#include "worker.h"
 #include "constants.h"
 #include <iostream>
+#include <csignal>
+#include <atomic>
 #include <chrono>
+
+namespace btc_gold {
+
+static std::atomic<bool> g_shutdown_requested{false};
+
+void signal_handler(int signal) {
+    if (signal == SIGINT || signal == SIGTERM) {
+        g_shutdown_requested = true;
+    }
+}
+
+}  // namespace btc_gold
 
 using namespace btc_gold;
 
 int main(int argc, char** argv) {
-    std::cout << LOGO << std::endl;
-    
-    Logger& logger = Logger::instance();
-    logger.info("BTC GOLD C++ Engine v1.0 starting...");
-    
     try {
+        // Install signal handlers
+        std::signal(SIGINT, signal_handler);
+        std::signal(SIGTERM, signal_handler);
+        
         // Parse configuration
         Config config;
-        if (argc > 1) {
-            config = ConfigParser::parse_cli(argc, argv);
-        } else {
-            config = ConfigParser::interactive_mode();
-        }
-        
-        // Initialize engine
-        Engine engine(config);
-        if (!engine.initialize(config.database_file)) {
-            logger.error("Failed to initialize engine");
+        if (!parse_args(argc, argv, config)) {
+            print_usage(argv[0]);
             return 1;
         }
+        
+        // Initialize logger
+        Logger logger(config.log_file, 
+                     config.verbose ? Logger::Level::DEBUG : Logger::Level::INFO);
+        logger.enable_console(true);
+        logger.enable_file(!config.log_file.empty());
+        
+        logger.info("=" + std::string(70, '='));
+        logger.info("BTC GOLD C++ v" + std::string(VERSION));
+        logger.info("Mode: " + std::to_string(static_cast<int>(config.mode)));
+        logger.info("=" + std::string(70, '='));
+        
+        // Initialize database
+        Database database;
+        database.set_logger(&logger);
+        
+        if (!config.database_file.empty()) {
+            logger.info("Loading targets from: " + config.database_file);
+            
+            if (!database.load(config.database_file, config.input_type)) {
+                logger.error("Failed to load database from: " + config.database_file);
+                return 1;
+            }
+            
+            if (database.empty()) {
+                logger.error("No valid targets loaded");
+                return 1;
+            }
+            
+            logger.info("Loaded " + std::to_string(database.size()) + " targets");
+        } else {
+            logger.error("No database file specified (use --input)");
+            return 1;
+        }
+        
+        // Initialize worker engine
+        logger.info("Initializing worker engine...");
+        WorkerEngine worker(config, logger, database);
         
         // Start scanning
-        auto start_time = std::chrono::steady_clock::now();
+        auto start_time = std::chrono::high_resolution_clock::now();
+        logger.info("Starting scan...");
         
-        if (!engine.start()) {
-            logger.error("Failed to start engine");
-            return 1;
-        }
+        worker.run();
         
-        auto end_time = std::chrono::steady_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::seconds>(
-            end_time - start_time
-        );
+        auto end_time = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time);
         
-        auto& stats = engine.get_stats();
-        double kps = (stats.total_keys.load() / 1000.0) / (duration.count() > 0 ? duration.count() : 1);
-        
+        logger.info("=" + std::string(70, '='));
         logger.info("Scan completed");
-        logger.info("Total keys: %lu", stats.total_keys.load());
-        logger.info("Found: %lu", stats.found_count.load());
-        logger.info("Speed: %.1f k/s", kps);
-        logger.info("Time: %ld seconds", duration.count());
+        logger.info("Total time: " + std::to_string(duration.count()) + " seconds");
+        logger.info("Results saved to: " + config.output_file);
+        logger.info("=" + std::string(70, '='));
         
         return 0;
-    }
-    catch (const std::exception& e) {
-        Logger::instance().error("Exception: %s", e.what());
+        
+    } catch (const std::exception& e) {
+        std::cerr << "FATAL ERROR: " << e.what() << std::endl;
+        return 1;
+    } catch (...) {
+        std::cerr << "FATAL ERROR: Unknown exception" << std::endl;
         return 1;
     }
 }
