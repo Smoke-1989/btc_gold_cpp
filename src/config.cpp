@@ -1,162 +1,62 @@
 #include "config.h"
-#include "logger.h"
 #include <iostream>
+#include <string>
 #include <cstring>
-#include <stdexcept>
-#include <limits>
+#include <cstdlib>
 
 namespace btc_gold {
 
-Config ConfigParser::parse_cli(int argc, char** argv) {
-    Config config;
-    
+void print_usage(const char* prog_name) {
+    std::cout << "Usage: " << prog_name << " [options]\n"
+              << "Options:\n"
+              << "  --mode <0-6>          Search mode (default: 0)\n"
+              << "  --input <file>        Database file\n"
+              << "  --input-type <type>   address|hash160|pubkey\n"
+              << "  --threads <n>         Number of threads\n"
+              << "  --start <n>           Start value\n"
+              << "  --end <n>             End value\n"
+              << "  --verbose             Enable verbose output\n"
+              << "  --help                Show this help\n";
+}
+
+bool parse_args(int argc, char** argv, Config& config) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         
-        if (arg == "--help" || arg == "-h") {
-            print_help();
-            std::exit(0);
-        }
-        else if (arg == "--threads" || arg == "-t") {
-            if (i + 1 < argc) {
-                config.num_threads = std::stoi(argv[++i]);
-            }
-        }
-        else if (arg == "--mode" || arg == "-m") {
-            if (i + 1 < argc) {
-                std::string mode = argv[++i];
-                if (mode == "linear" || mode == "1") {
-                    config.mode = Config::Mode::LINEAR;
-                } else if (mode == "random" || mode == "2") {
-                    config.mode = Config::Mode::RANDOM;
-                } else if (mode == "geometric" || mode == "3") {
-                    config.mode = Config::Mode::GEOMETRIC;
-                } else if (mode == "terminator" || mode == "4") {
-                    config.mode = Config::Mode::TERMINATOR;
-                }
-            }
-        }
-        else if (arg == "--scan-mode" || arg == "-s") {
-            if (i + 1 < argc) {
-                int mode = std::stoi(argv[++i]);
-                config.scan_mode = static_cast<Config::ScanMode>(mode);
-            }
-        }
-        else if (arg == "--database" || arg == "-d") {
-            if (i + 1 < argc) {
-                config.database_file = argv[++i];
-            }
-        }
-        else if (arg == "--start") {
-            if (i + 1 < argc) {
-                std::string val = argv[++i];
-                // Use custom parser for potentially large hex values if needed, 
-                // but stoull is limited to 64-bit. For larger ranges, we need manual parsing.
-                try {
-                    if (val.substr(0, 2) == "0x" || val.substr(0, 2) == "0X") {
-                        config.start_value = std::stoull(val, nullptr, 16);
-                    } else {
-                        config.start_value = std::stoull(val);
-                    }
-                } catch (const std::out_of_range& e) {
-                   // If 64-bit overflow, clamp to max or handle error
-                   // For Random mode > 64 bit, we might need 128-bit support in Config.
-                   // For now, let's catch it.
-                   std::cerr << "[WARNING] Start value too large for 64-bit logic, clamping to max.\n";
-                   config.start_value = std::numeric_limits<uint64_t>::max();
-                }
-            }
-        }
-        else if (arg == "--end") {
-            if (i + 1 < argc) {
-                std::string val = argv[++i];
-                try {
-                    if (val.substr(0, 2) == "0x" || val.substr(0, 2) == "0X") {
-                        config.end_value = std::stoull(val, nullptr, 16);
-                    } else {
-                        config.end_value = std::stoull(val);
-                    }
-                } catch (const std::out_of_range& e) {
-                   std::cerr << "[WARNING] End value too large for 64-bit logic, clamping to max.\n";
-                   config.end_value = std::numeric_limits<uint64_t>::max();
-                }
-            }
-        }
-        else if (arg == "--multiplier") {
-            if (i + 1 < argc) {
-                config.multiplier = std::stoull(argv[++i]);
-            }
-        }
-        else if (arg == "--range-min") {
-            if (i + 1 < argc) {
-                config.range_min_bit = std::stoi(argv[++i]);
-            }
-        }
-        else if (arg == "--range-max") {
-            if (i + 1 < argc) {
-                config.range_max_bit = std::stoi(argv[++i]);
-            }
-        }
-        else if (arg == "--input-type") {
-            if (i + 1 < argc) {
-                int type = std::stoi(argv[++i]);
-                config.input_type = static_cast<Config::InputType>(type);
-            }
+        if (arg == "--help") {
+            return false;
+        } else if (arg == "--mode" && i + 1 < argc) {
+            config.mode = static_cast<Config::Mode>(std::stoi(argv[++i]));
+        } else if (arg == "--input" && i + 1 < argc) {
+            config.database_file = argv[++i];
+        } else if (arg == "--output" && i + 1 < argc) {
+            config.output_file = argv[++i];
+        } else if (arg == "--log-file" && i + 1 < argc) {
+            config.log_file = argv[++i];
+        } else if (arg == "--threads" && i + 1 < argc) {
+            config.num_threads = std::stoi(argv[++i]);
+        } else if (arg == "--start" && i + 1 < argc) {
+            config.start_value = std::stoull(argv[++i]);
+        } else if (arg == "--end" && i + 1 < argc) {
+            config.end_value = std::stoull(argv[++i]);
+        } else if (arg == "--input-type" && i + 1 < argc) {
+            std::string type = argv[++i];
+            if (type == "address") config.input_type = Config::InputType::ADDRESS;
+            else if (type == "hash160") config.input_type = Config::InputType::HASH160;
+            else if (type == "pubkey") config.input_type = Config::InputType::PUBKEY;
+        } else if (arg == "--verbose") {
+            config.verbose = true;
+        } else if (arg == "--stop-on-find") {
+            config.stop_on_find = true;
+        } else if (arg == "--range-min" && i + 1 < argc) {
+            config.range_min_bit = std::stoi(argv[++i]);
+        } else if (arg == "--range-max" && i + 1 < argc) {
+            config.range_max_bit = std::stoi(argv[++i]);
+        } else if (arg == "--multiplier" && i + 1 < argc) {
+            config.multiplier = std::stoull(argv[++i]);
         }
     }
-    
-    return config;
-}
-
-Config ConfigParser::interactive_mode() {
-    Config config;
-    
-    std::cout << "\n[Database Input Format]\n";
-    std::cout << "[1] Bitcoin Address\n";
-    std::cout << "[2] HASH160\n";
-    std::cout << "[3] Public Key\n";
-    std::cout << ">> ";
-    
-    int choice;
-    std::cin >> choice;
-    config.input_type = static_cast<Config::InputType>(choice);
-    
-    std::cout << "\n[Scan Mode]\n";
-    std::cout << "[1] Compressed Only\n";
-    std::cout << "[2] Uncompressed Only\n";
-    std::cout << "[3] Both\n";
-    std::cout << ">> ";
-    
-    std::cin >> choice;
-    config.scan_mode = static_cast<Config::ScanMode>(choice);
-    
-    return config;
-}
-
-void ConfigParser::print_menu() {
-    std::cout << "\n[BTC GOLD Menu]\n";
-    std::cout << "[1] Linear Mode\n";
-    std::cout << "[2] Random Mode\n";
-    std::cout << "[3] Geometric Mode\n";
-    std::cout << "[4] TERMINATOR Mode\n";
-}
-
-void ConfigParser::print_help() {
-    std::cout << "BTC GOLD C++ - Usage\n";
-    std::cout << "  btc_gold [options]\n";
-    std::cout << "  btc_gold --help\n";
-    std::cout << "\nOptions:\n";
-    std::cout << "  --threads, -t <N>          Number of threads (default: auto)\n";
-    std::cout << "  --mode, -m <mode>          Mode: linear, random, geometric, terminator\n";
-    std::cout << "  --scan-mode, -s <N>        Scan: 1=compressed, 2=uncompressed, 3=both (default: 3)\n";
-    std::cout << "  --database, -d <file>      Database file (default: alvos.txt)\n";
-    std::cout << "  --start <value>            Start value (decimal or hex with 0x)\n";
-    std::cout << "  --end <value>              End value (decimal or hex with 0x)\n";
-    std::cout << "  --multiplier <value>       Multiplier / Initial Jump (Terminator)\n";
-    std::cout << "  --range-min <bit>          Terminator Min Bit (e.g. 66)\n";
-    std::cout << "  --range-max <bit>          Terminator Max Bit (e.g. 67)\n";
-    std::cout << "  --input-type <N>           Input: 1=address, 2=hash160, 3=pubkey (default: 1)\n";
-    std::cout << "  --help, -h                 Show this help\n";
+    return true;
 }
 
 }  // namespace btc_gold
