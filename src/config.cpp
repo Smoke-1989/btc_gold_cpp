@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <stdexcept>
 #include <sstream>
-#include <array>
+#include <iomanip>
 
 namespace btc_gold {
 
@@ -14,7 +14,7 @@ namespace btc_gold {
 // 256-BIT HEX PARSER - Converts hex string to PrivateKey (32 bytes)
 // ============================================================================
 
-bool parse_hex_256bit(const std::string& hex_str, std::array<uint8_t, 32>& out) {
+bool parse_hex_to_privkey(const std::string& hex_str, PrivateKey& out) {
     std::string clean = hex_str;
     
     // Remove 0x prefix if present
@@ -22,12 +22,15 @@ bool parse_hex_256bit(const std::string& hex_str, std::array<uint8_t, 32>& out) 
         clean = clean.substr(2);
     }
     
-    // Pad with leading zeros to 64 chars (32 bytes)
-    if (clean.size() > 64) {
-        return false; // Too long for 256-bit
+    // Remove spaces
+    clean.erase(std::remove_if(clean.begin(), clean.end(), ::isspace), clean.end());
+    
+    // Check length
+    if (clean.empty() || clean.size() > 64) {
+        return false;
     }
     
-    // Pad left with zeros
+    // Pad with leading zeros to 64 chars (32 bytes)
     while (clean.size() < 64) {
         clean = "0" + clean;
     }
@@ -36,7 +39,7 @@ bool parse_hex_256bit(const std::string& hex_str, std::array<uint8_t, 32>& out) 
     for (size_t i = 0; i < 32; i++) {
         std::string byte_str = clean.substr(i * 2, 2);
         try {
-            out[i] = static_cast<uint8_t>(std::stoi(byte_str, nullptr, 16));
+            out[i] = static_cast<uint8_t>(std::stoul(byte_str, nullptr, 16));
         } catch (...) {
             return false;
         }
@@ -46,8 +49,7 @@ bool parse_hex_256bit(const std::string& hex_str, std::array<uint8_t, 32>& out) 
 }
 
 // ============================================================================
-// FLEXIBLE NUMBER PARSER - Supports hex (up to 256-bit) and decimal (64-bit)
-// For values > 64-bit, must use hex format
+// FLEXIBLE NUMBER PARSER - Supports hex and decimal (up to 64-bit)
 // ============================================================================
 
 uint64_t parse_number(const std::string& str) {
@@ -79,7 +81,7 @@ uint64_t parse_number(const std::string& str) {
     
     // If hex and more than 16 chars (64 bits), it's too big for uint64_t
     if (is_hex && clean.size() > 16) {
-        throw std::overflow_error("Hex value too large for 64-bit (use --start-hex for 256-bit)");
+        throw std::overflow_error("Hex value exceeds 64-bit limit");
     }
     
     // Parse as hex or decimal (both fit in uint64_t)
@@ -90,7 +92,7 @@ uint64_t parse_number(const std::string& str) {
             return std::stoull(clean, nullptr, 10);
         }
     } catch (const std::exception& e) {
-        throw std::invalid_argument("Invalid number format: " + str + " (" + e.what() + ")");
+        throw std::invalid_argument("Invalid number format: " + str);
     }
 }
 
@@ -123,9 +125,9 @@ void print_usage(const char* prog_name) {
               << "  --end <value>           End value (hex or decimal, up to 64-bit)\n"
               << "\n"
               << "  256-BIT RANGE (for values > 64-bit):\n"
-              << "  --start-hex <hex>       Start value as 256-bit hex (no 0x prefix)\n"
-              << "                          Example: 3fffffffffffffffff\n"
-              << "  --end-hex <hex>         End value as 256-bit hex (no 0x prefix)\n"
+              << "  --start-hex <hex>       Start value as 256-bit hex (with or without 0x)\n"
+              << "                          Example: 3fffffffffffffffff or 0x3fff\n"
+              << "  --end-hex <hex>         End value as 256-bit hex (with or without 0x)\n"
               << "\n"
               << "  BIT RANGE (for Doubling/Hamming modes):\n"
               << "  --min-bit <n>           Minimum bit position (1-256)\n"
@@ -147,7 +149,7 @@ void print_usage(const char* prog_name) {
               << "  # Linear mode with 64-bit range\n"
               << "  " << prog_name << " --mode linear --start 0x1000 --end 0xFFFF\n"
               << "\n"
-              << "  # Linear mode with 256-bit range (hex only)\n"
+              << "  # Linear mode with 256-bit range (FULL SUPPORT)\n"
               << "  " << prog_name << " --mode linear --start-hex 3fffffffffffffffff \\\n"
               << "                --end-hex 7fffffffffffffffff\n"
               << "\n"
@@ -169,7 +171,6 @@ bool parse_args(int argc, char** argv, Config& config) {
             return false;
         } else if (arg == "--mode" && i + 1 < argc) {
             std::string val = argv[++i];
-            // Normalize to lower case
             std::transform(val.begin(), val.end(), val.begin(), ::tolower);
             
             if (val == "linear" || val == "0") config.mode = Config::Mode::LINEAR;
@@ -199,6 +200,7 @@ bool parse_args(int argc, char** argv, Config& config) {
             // 64-bit parser
             try {
                 config.start_value = parse_number(argv[++i]);
+                config.use_256bit_range = false; // Use 64-bit mode
             } catch (const std::exception& e) {
                 std::cerr << "Error parsing --start: " << e.what() << "\n";
                 std::cerr << "For values > 64-bit, use --start-hex with hex format\n";
@@ -214,26 +216,39 @@ bool parse_args(int argc, char** argv, Config& config) {
                 return false;
             }
         } else if (arg == "--start-hex" && i + 1 < argc) {
-            // 256-bit hex parser (stores in start_value for now, needs refactor for full 256-bit)
+            // v4.0: FULL 256-BIT HEX PARSER
             std::string hex_val = argv[++i];
-            try {
-                // For now, try to fit in 64-bit
-                config.start_value = parse_number(hex_val);
-            } catch (const std::overflow_error&) {
-                std::cerr << "WARNING: 256-bit ranges not yet fully implemented in v4.0\n";
-                std::cerr << "         Using max 64-bit value. Full 256-bit support coming soon.\n";
-                config.start_value = 0xFFFFFFFFFFFFFFFF;
+            if (!parse_hex_to_privkey(hex_val, config.start_key_256)) {
+                std::cerr << "Error: Invalid hex format for --start-hex: " << hex_val << "\n";
+                return false;
             }
+            config.use_256bit_range = true;
+            
+            // Log the parsed value
+            std::cout << "[INFO] Start key (256-bit): ";
+            for (int j = 0; j < 32; j++) {
+                std::cout << std::hex << std::setw(2) << std::setfill('0') 
+                         << static_cast<int>(config.start_key_256[j]);
+            }
+            std::cout << std::dec << "\n";
+            
         } else if (arg == "--end-hex" && i + 1 < argc) {
-            // 256-bit hex parser
+            // v4.0: FULL 256-BIT HEX PARSER
             std::string hex_val = argv[++i];
-            try {
-                config.end_value = parse_number(hex_val);
-            } catch (const std::overflow_error&) {
-                std::cerr << "WARNING: 256-bit ranges not yet fully implemented in v4.0\n";
-                std::cerr << "         Using max 64-bit value. Full 256-bit support coming soon.\n";
-                config.end_value = 0xFFFFFFFFFFFFFFFF;
+            if (!parse_hex_to_privkey(hex_val, config.end_key_256)) {
+                std::cerr << "Error: Invalid hex format for --end-hex: " << hex_val << "\n";
+                return false;
             }
+            config.use_256bit_range = true;
+            
+            // Log the parsed value
+            std::cout << "[INFO] End key (256-bit): ";
+            for (int j = 0; j < 32; j++) {
+                std::cout << std::hex << std::setw(2) << std::setfill('0') 
+                         << static_cast<int>(config.end_key_256[j]);
+            }
+            std::cout << std::dec << "\n";
+            
         } else if (arg == "--input-type" && i + 1 < argc) {
             std::string type = argv[++i];
             if (type == "address") config.input_type = Config::InputType::ADDRESS;
