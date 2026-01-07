@@ -48,6 +48,16 @@ void WorkerEngine::run() {
         config_.num_threads > 0 ? config_.num_threads : std::thread::hardware_concurrency()));
     logger_.info("[INFO] Database size: " + std::to_string(database_.size()));
     
+    // v4.0: Check for 256-bit range mode
+    if (config_.use_256bit_range) {
+        logger_.warning("[WARN] 256-bit range mode detected");
+        logger_.warning("[WARN] Full 256-bit iteration support will be available in v4.1");
+        logger_.warning("[WARN] For now, using bit-range modes (DOUBLING/HAMMING) for >64-bit searches");
+        logger_.error("[ERROR] Please use --min-bit and --max-bit for ranges above 2^64");
+        logger_.error("[ERROR] Example: --mode doubling --min-bit 62 --max-bit 66");
+        return;
+    }
+    
     // Dispatch to appropriate mode
     try {
         switch (config_.mode) {
@@ -94,6 +104,7 @@ void WorkerEngine::run() {
 
 void WorkerEngine::run_linear_mode() {
     logger_.info("[LINEAR] Initializing TURBO mode (Point Addition)");
+    logger_.info("[LINEAR] Range: " + std::to_string(config_.start_value) + " to " + std::to_string(config_.end_value));
     
     int num_threads = config_.num_threads > 0 ? config_.num_threads : std::thread::hardware_concurrency();
     
