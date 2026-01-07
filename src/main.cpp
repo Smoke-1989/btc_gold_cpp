@@ -10,11 +10,19 @@
 
 namespace btc_gold {
 
-static std::atomic<bool> g_shutdown_requested{false};
+// Global pointer to worker for signal handling
+// Using atomic pointer for thread safety, though technically signal handlers are single-threaded
+static std::atomic<WorkerEngine*> g_worker{nullptr};
 
 void signal_handler(int signal) {
     if (signal == SIGINT || signal == SIGTERM) {
-        g_shutdown_requested = true;
+        WorkerEngine* worker = g_worker.load();
+        if (worker) {
+            // Write directly to stderr to avoid memory allocation in signal handler
+            const char* msg = "\n[SIGNAL] Interrupt received. Stopping gracefully...\n";
+            (void)!write(2, msg, 50); 
+            worker->stop();
+        }
     }
 }
 
@@ -22,13 +30,12 @@ void signal_handler(int signal) {
 
 using namespace btc_gold;
 
+// Need unistd.h for write()
+#include <unistd.h>
+
 int main(int argc, char** argv) {
     try {
-        // Install signal handlers
-        std::signal(SIGINT, signal_handler);
-        std::signal(SIGTERM, signal_handler);
-        
-        // Parse configuration
+        // Parse configuration first
         Config config;
         if (!parse_args(argc, argv, config)) {
             print_usage(argv[0]);
@@ -73,11 +80,21 @@ int main(int argc, char** argv) {
         logger.info("Initializing worker engine...");
         WorkerEngine worker(config, logger, database);
         
+        // Register global pointer for signal handler
+        g_worker.store(&worker);
+        
+        // Install signal handlers AFTER worker is ready
+        std::signal(SIGINT, signal_handler);
+        std::signal(SIGTERM, signal_handler);
+        
         // Start scanning
         auto start_time = std::chrono::high_resolution_clock::now();
         logger.info("Starting scan...");
         
         worker.run();
+        
+        // Unregister global pointer
+        g_worker.store(nullptr);
         
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::seconds>(end_time - start_time);
