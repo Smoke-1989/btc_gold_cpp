@@ -21,8 +21,7 @@ WorkerEngine::WorkerEngine(const Config& config, Logger& logger, Database& datab
       secp256k1_() {}
 
 WorkerEngine::~WorkerEngine() {
-    // Flush any remaining hits
-    flush_hits();
+    should_stop_ = true; // Ensure threads stop
     
     // Join all worker threads
     for (auto& worker : workers_) {
@@ -30,6 +29,9 @@ WorkerEngine::~WorkerEngine() {
             worker.join();
         }
     }
+    
+    // Flush any remaining hits
+    flush_hits();
 }
 
 // ============================================================================
@@ -132,7 +134,8 @@ void WorkerEngine::linear_worker_turbo(int thread_id) {
             // Check hash
             if (check_match(privkey, pubkey, hash160)) {
                 HitBuffer::Hit hit;
-                format_key_result(privkey, hash160, hit);
+                // v4.0 Fix: Explicitly pass current key integer for detailed formatting
+                format_key_result(privkey, hash160, hit, current); 
                 hit_buffer_.add(hit);
                 found_count_++;
                 logger_.warning("[FOUND] Match at " + std::to_string(current));
@@ -144,6 +147,14 @@ void WorkerEngine::linear_worker_turbo(int thread_id) {
             
             // Update pubkey via Point Addition (TURBO)
             secp256k1_.pubkey_tweak_add(pubkey, 1);
+            
+            // v4.0 Fix: Update private key too for correct WIF generation on next iteration (if needed)
+            // But for speed, we only update privkey struct when a match is found in format_key_result
+            // Wait, secp256k1_.pubkey_tweak_add only updates the point. 
+            // We need to keep 'privkey' in sync OR re-generate it only on match.
+            // Re-generating on match is faster for the loop. 
+            // See format_key_result implementation.
+            
             hash160 = secp256k1_.hash160(pubkey);
             
             keys_checked_++;
@@ -193,17 +204,18 @@ void WorkerEngine::random_worker(int thread_id) {
         
         for (uint64_t i = 0; i < UINT64_MAX && !should_stop_; i++) {
             PrivateKey privkey;
-            privkey[0] = dist(rng);
-            privkey[1] = dist(rng);
-            privkey[2] = dist(rng);
-            privkey[3] = dist(rng);
+            // Generate full 256-bit random key
+            for (int k = 0; k < 32; k += 8) {
+                uint64_t part = dist(rng);
+                std::memcpy(&privkey[k], &part, 8);
+            }
             
             PublicKey pubkey = secp256k1_.pubkey_compressed(privkey);
             Hash160 hash160 = secp256k1_.hash160(pubkey);
             
             if (check_match(privkey, pubkey, hash160)) {
                 HitBuffer::Hit hit;
-                format_key_result(privkey, hash160, hit);
+                format_key_result(privkey, hash160, hit, 0); // 0 for random (unknown int value without heavy math)
                 hit_buffer_.add(hit);
                 found_count_++;
                 logger_.warning("[FOUND] Random match found");
@@ -279,7 +291,8 @@ void WorkerEngine::doubling_worker() {
             
             if (check_match(privkey, pubkey, hash160)) {
                 HitBuffer::Hit hit;
-                format_key_result(privkey, hash160, hit);
+                // Pass bit index as the 'ID' for display
+                format_key_result(privkey, hash160, hit, bit);
                 hit_buffer_.add(hit);
                 found_count_++;
                 logger_.warning("[FOUND] 2^" + std::to_string(bit));
@@ -339,7 +352,7 @@ void WorkerEngine::hamming_worker() {
                 
                 if (check_match(privkey, pubkey, hash160)) {
                     HitBuffer::Hit hit;
-                    format_key_result(privkey, hash160, hit);
+                    format_key_result(privkey, hash160, hit, 0); // Need complex conversion for exact int
                     hit_buffer_.add(hit);
                     found_count_++;
                     logger_.warning("[FOUND] 2^" + std::to_string(bit1) + " + 2^" + std::to_string(bit2));
@@ -402,7 +415,7 @@ void WorkerEngine::modular_stride_worker(int thread_id) {
             
             if (check_match(privkey, pubkey, hash160)) {
                 HitBuffer::Hit hit;
-                format_key_result(privkey, hash160, hit);
+                format_key_result(privkey, hash160, hit, current);
                 hit_buffer_.add(hit);
                 found_count_++;
                 logger_.warning("[FOUND] Match at " + std::to_string(current));
@@ -437,12 +450,23 @@ bool WorkerEngine::check_match(const PrivateKey& privkey, const PublicKey& pubke
     return database_.contains(hash160);
 }
 
-void WorkerEngine::format_key_result(const PrivateKey& privkey, const Hash160& hash160,
-                                     HitBuffer::Hit& hit) {
-    hit.privkey = privkey;
+void WorkerEngine::format_key_result(const PrivateKey& privkey_struct, const Hash160& hash160,
+                                     HitBuffer::Hit& hit, uint64_t int_val) {
+    // CRITICAL FIX: Ensure privkey matches the integer value exactly
+    // In Linear/Modular modes, the 'privkey_struct' passed might be stale if we only updated the point
+    // So we reconstruct it from int_val if int_val > 0
+    if (int_val > 0) {
+        secp256k1_.int_to_privkey(int_val, hit.privkey);
+    } else {
+        hit.privkey = privkey_struct; // Use as-is for random/etc
+    }
+    
     hit.hash160 = hash160;
     hit.address = secp256k1_.hash160_to_address(hash160);
-    hit.wif_compressed = secp256k1_.privkey_to_wif(privkey, true);
+    hit.wif_compressed = secp256k1_.privkey_to_wif(hit.privkey, true);
+    
+    // Store extra info for the file output
+    hit.extra_info = std::to_string(int_val);
 }
 
 void WorkerEngine::flush_hits() {
@@ -458,9 +482,20 @@ void WorkerEngine::flush_hits() {
         }
         
         for (const auto& hit : hits) {
-            outfile << hit.address << "|" 
-                   << hit.wif_compressed << "|" 
-                   << "" << "\n";
+            // DETAILED FORMAT RESTORED
+            // Format: Hex ID | Decimal ID | WIF | Address
+            
+            std::stringstream ss;
+            ss << "0x" << std::hex << std::uppercase << std::stoull(hit.extra_info);
+            std::string hex_id = ss.str();
+            
+            outfile << "--------------------------------------------------------------------------------\n";
+            outfile << "FOUND MATCH!\n";
+            outfile << "Hex ID  : " << hex_id << "\n";
+            outfile << "Dec ID  : " << hit.extra_info << "\n";
+            outfile << "WIF     : " << hit.wif_compressed << "\n";
+            outfile << "Address : " << hit.address << "\n";
+            outfile << "--------------------------------------------------------------------------------\n";
         }
         
         outfile.close();
