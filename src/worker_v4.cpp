@@ -135,11 +135,13 @@ void WorkerEngine::linear_worker_turbo(int thread_id) {
             // Check hash
             if (check_match(privkey, pubkey, hash160)) {
                 HitBuffer::Hit hit;
-                // v4.0 Fix: Explicitly pass current key integer for detailed formatting
                 format_key_result(privkey, hash160, hit, current); 
                 hit_buffer_.add(hit);
                 found_count_++;
                 logger_.warning("[FOUND] Match at " + std::to_string(current));
+                
+                // v4.0 FIX: IMMEDIATE FLUSH - Save to file NOW, not later
+                flush_hits();
                 
                 if (config_.stop_on_find) {
                     should_stop_ = true;
@@ -148,21 +150,9 @@ void WorkerEngine::linear_worker_turbo(int thread_id) {
             
             // Update pubkey via Point Addition (TURBO)
             secp256k1_.pubkey_tweak_add(pubkey, 1);
-            
-            // v4.0 Fix: Update private key too for correct WIF generation on next iteration (if needed)
-            // But for speed, we only update privkey struct when a match is found in format_key_result
-            // Wait, secp256k1_.pubkey_tweak_add only updates the point. 
-            // We need to keep 'privkey' in sync OR re-generate it only on match.
-            // Re-generating on match is faster for the loop. 
-            // See format_key_result implementation.
-            
             hash160 = secp256k1_.hash160(pubkey);
             
             keys_checked_++;
-            
-            if (hit_buffer_.should_flush()) {
-                flush_hits();
-            }
         }
         
         flush_hits();
@@ -216,10 +206,13 @@ void WorkerEngine::random_worker(int thread_id) {
             
             if (check_match(privkey, pubkey, hash160)) {
                 HitBuffer::Hit hit;
-                format_key_result(privkey, hash160, hit, 0); // 0 for random (unknown int value without heavy math)
+                format_key_result(privkey, hash160, hit, 0);
                 hit_buffer_.add(hit);
                 found_count_++;
                 logger_.warning("[FOUND] Random match found");
+                
+                // v4.0 FIX: IMMEDIATE FLUSH
+                flush_hits();
                 
                 if (config_.stop_on_find) {
                     should_stop_ = true;
@@ -227,10 +220,6 @@ void WorkerEngine::random_worker(int thread_id) {
             }
             
             keys_checked_++;
-            
-            if (hit_buffer_.should_flush()) {
-                flush_hits();
-            }
         }
     } catch (const std::exception& e) {
         logger_.error("[ERROR] Random worker: " + std::string(e.what()));
@@ -292,11 +281,13 @@ void WorkerEngine::doubling_worker() {
             
             if (check_match(privkey, pubkey, hash160)) {
                 HitBuffer::Hit hit;
-                // Pass bit index as the 'ID' for display
                 format_key_result(privkey, hash160, hit, bit);
                 hit_buffer_.add(hit);
                 found_count_++;
                 logger_.warning("[FOUND] 2^" + std::to_string(bit));
+                
+                // v4.0 FIX: IMMEDIATE FLUSH
+                flush_hits();
                 
                 if (config_.stop_on_find) {
                     should_stop_ = true;
@@ -353,10 +344,13 @@ void WorkerEngine::hamming_worker() {
                 
                 if (check_match(privkey, pubkey, hash160)) {
                     HitBuffer::Hit hit;
-                    format_key_result(privkey, hash160, hit, 0); // Need complex conversion for exact int
+                    format_key_result(privkey, hash160, hit, 0);
                     hit_buffer_.add(hit);
                     found_count_++;
                     logger_.warning("[FOUND] 2^" + std::to_string(bit1) + " + 2^" + std::to_string(bit2));
+                    
+                    // v4.0 FIX: IMMEDIATE FLUSH
+                    flush_hits();
                     
                     if (config_.stop_on_find) {
                         should_stop_ = true;
@@ -421,17 +415,15 @@ void WorkerEngine::modular_stride_worker(int thread_id) {
                 found_count_++;
                 logger_.warning("[FOUND] Match at " + std::to_string(current));
                 
+                // v4.0 FIX: IMMEDIATE FLUSH
+                flush_hits();
+                
                 if (config_.stop_on_find) {
                     should_stop_ = true;
                 }
             }
             
             keys_checked_++;
-            
-            if (hit_buffer_.should_flush()) {
-                flush_hits();
-            }
-            
             current += config_.multiplier;
         }
         
@@ -454,12 +446,10 @@ bool WorkerEngine::check_match(const PrivateKey& privkey, const PublicKey& pubke
 void WorkerEngine::format_key_result(const PrivateKey& privkey_struct, const Hash160& hash160,
                                      HitBuffer::Hit& hit, uint64_t int_val) {
     // CRITICAL FIX: Ensure privkey matches the integer value exactly
-    // In Linear/Modular modes, the 'privkey_struct' passed might be stale if we only updated the point
-    // So we reconstruct it from int_val if int_val > 0
     if (int_val > 0) {
         secp256k1_.int_to_privkey(int_val, hit.privkey);
     } else {
-        hit.privkey = privkey_struct; // Use as-is for random/etc
+        hit.privkey = privkey_struct;
     }
     
     hit.hash160 = hash160;
@@ -483,23 +473,48 @@ void WorkerEngine::flush_hits() {
         }
         
         for (const auto& hit : hits) {
-            // DETAILED FORMAT RESTORED
-            // Format: Hex ID | Decimal ID | WIF | Address
+            // v4.0 DETAILED FORMAT - Professional output
+            // Convert privkey bytes to hex string
+            std::stringstream hex_stream;
+            hex_stream << std::hex << std::setfill('0');
+            for (int i = 0; i < 32; i++) {
+                hex_stream << std::setw(2) << static_cast<int>(hit.privkey[i]);
+            }
+            std::string privkey_hex = hex_stream.str();
             
-            std::stringstream ss;
-            ss << "0x" << std::hex << std::uppercase << std::stoull(hit.extra_info);
-            std::string hex_id = ss.str();
+            // Convert pubkey bytes to hex string
+            std::stringstream pubkey_hex_stream;
+            pubkey_hex_stream << std::hex << std::setfill('0');
+            for (int i = 0; i < 33; i++) {
+                pubkey_hex_stream << std::setw(2) << static_cast<int>(hit.pubkey[i]);
+            }
+            std::string pubkey_hex = pubkey_hex_stream.str();
             
-            outfile << "--------------------------------------------------------------------------------\n";
-            outfile << "FOUND MATCH!\n";
-            outfile << "Hex ID  : " << hex_id << "\n";
-            outfile << "Dec ID  : " << hit.extra_info << "\n";
-            outfile << "WIF     : " << hit.wif_compressed << "\n";
-            outfile << "Address : " << hit.address << "\n";
-            outfile << "--------------------------------------------------------------------------------\n";
+            // Convert hash160 to hex string
+            std::stringstream hash160_hex_stream;
+            hash160_hex_stream << std::hex << std::setfill('0');
+            for (int i = 0; i < 20; i++) {
+                hash160_hex_stream << std::setw(2) << static_cast<int>(hit.hash160[i]);
+            }
+            std::string hash160_hex = hash160_hex_stream.str();
+            
+            // Generate uncompressed WIF
+            std::string wif_uncompressed = secp256k1_.privkey_to_wif(hit.privkey, false);
+            
+            outfile << "================================================================================\n";
+            outfile << "FOUND GOLD!\n";
+            outfile << "================================================================================\n";
+            outfile << "Address:            " << hit.address << " (Compressed)\n";
+            outfile << "Private Key (HEX):  " << privkey_hex << "\n";
+            outfile << "Public Key (HEX):   " << pubkey_hex << "\n";
+            outfile << "Hash160:            " << hash160_hex << "\n";
+            outfile << "WIF (Compressed):   " << hit.wif_compressed << "\n";
+            outfile << "WIF (Uncompressed): " << wif_uncompressed << "\n";
+            outfile << "================================================================================\n";
         }
         
         outfile.close();
+        outfile.flush(); // Ensure data is written to disk immediately
         logger_.debug("Flushed " + std::to_string(hits.size()) + " hits");
     }
 }
