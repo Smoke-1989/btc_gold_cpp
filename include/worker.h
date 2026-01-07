@@ -1,6 +1,6 @@
 #pragma once
 
-#include "config.h"              // Config + fundamental types
+#include "config.h"
 #include "secp256k1_wrapper.h"
 #include "database.h"
 #include "logger.h"
@@ -50,7 +50,7 @@ struct HitBuffer {
 };
 
 // ============================================================================
-// WORKER ENGINE v4.0 - Enterprise Grade
+// WORKER ENGINE v4.1 - Enterprise Grade with Full 256-bit Support
 // ============================================================================
 
 class WorkerEngine {
@@ -80,9 +80,9 @@ public:
 private:
     // Config and dependencies (references to external objects)
     const Config& config_;
-    Logger& logger_;  // Reference, not ownership
-    Database& database_;  // Reference, not ownership
-    Secp256k1Wrapper secp256k1_;  // Owned
+    Logger& logger_;
+    Database& database_;
+    Secp256k1Wrapper secp256k1_;
     
     // State
     HitBuffer hit_buffer_;
@@ -93,6 +93,8 @@ private:
     
     // Worker methods
     void linear_worker_turbo(int thread_id);
+    void linear_worker_64bit(int thread_id);   // v4.1: Legacy 64-bit mode
+    void linear_worker_256bit(int thread_id);  // v4.1: Full 256-bit mode
     void random_worker(int thread_id);
     void geometric_worker(int thread_id);
     void terminator_worker(int thread_id);
@@ -103,9 +105,6 @@ private:
     // Helpers
     bool check_match(const PrivateKey& privkey, const PublicKey& pubkey,
                      const Hash160& hash160);
-    // Updated signature for v4.0 detailed output support
-    void format_key_result(const PrivateKey& privkey, const Hash160& hash160,
-                          HitBuffer::Hit& hit, uint64_t int_val);
     void flush_hits();
     void report_progress();
 };
