@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <cstring>  // v4.0 FIX: Required for std::memcpy
 
 namespace btc_gold {
 
