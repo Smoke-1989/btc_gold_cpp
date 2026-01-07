@@ -475,18 +475,19 @@ void WorkerEngine::flush_hits() {
         for (const auto& hit : hits) {
             // v4.0 DETAILED FORMAT - Professional output
             // Convert privkey bytes to hex string
-            std::stringstream hex_stream;
-            hex_stream << std::hex << std::setfill('0');
+            std::stringstream privkey_hex_stream;
+            privkey_hex_stream << std::hex << std::setfill('0');
             for (int i = 0; i < 32; i++) {
-                hex_stream << std::setw(2) << static_cast<int>(hit.privkey[i]);
+                privkey_hex_stream << std::setw(2) << static_cast<int>(hit.privkey[i]);
             }
-            std::string privkey_hex = hex_stream.str();
+            std::string privkey_hex = privkey_hex_stream.str();
             
-            // Convert pubkey bytes to hex string
+            // Generate pubkey from privkey for display
+            PublicKey pubkey = secp256k1_.pubkey_compressed(hit.privkey);
             std::stringstream pubkey_hex_stream;
             pubkey_hex_stream << std::hex << std::setfill('0');
             for (int i = 0; i < 33; i++) {
-                pubkey_hex_stream << std::setw(2) << static_cast<int>(hit.pubkey[i]);
+                pubkey_hex_stream << std::setw(2) << static_cast<int>(pubkey[i]);
             }
             std::string pubkey_hex = pubkey_hex_stream.str();
             
@@ -514,7 +515,6 @@ void WorkerEngine::flush_hits() {
         }
         
         outfile.close();
-        outfile.flush(); // Ensure data is written to disk immediately
         logger_.debug("Flushed " + std::to_string(hits.size()) + " hits");
     }
 }
