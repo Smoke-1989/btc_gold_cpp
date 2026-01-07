@@ -40,9 +40,18 @@ struct Config {
     std::string output_file = "found.txt";
     std::string log_file;       // Log file path
     
-    // Search Range (for Linear/Geometric/Doubling modes)
+    // v4.0: FULL 256-BIT RANGE SUPPORT
+    // For values <= 64-bit, use start_value/end_value (backward compatible)
+    // For values > 64-bit, use start_key_256/end_key_256 and set use_256bit_range = true
+    
+    // 64-bit range (legacy, still default)
     uint64_t start_value = 1;
     uint64_t end_value = 0xFFFFFFFFFFFFFFFF;
+    
+    // 256-bit range (new)
+    bool use_256bit_range = false;
+    PrivateKey start_key_256 = {};
+    PrivateKey end_key_256 = {};
     
     // Bit Range (for Doubling/Hamming modes)
     int range_min_bit = 1;
