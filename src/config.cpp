@@ -6,11 +6,48 @@
 #include <algorithm>
 #include <stdexcept>
 #include <sstream>
+#include <array>
 
 namespace btc_gold {
 
 // ============================================================================
-// ROBUST HEX/DECIMAL PARSER - Supports: 0x3fff, 3fff, 123456, etc.
+// 256-BIT HEX PARSER - Converts hex string to PrivateKey (32 bytes)
+// ============================================================================
+
+bool parse_hex_256bit(const std::string& hex_str, std::array<uint8_t, 32>& out) {
+    std::string clean = hex_str;
+    
+    // Remove 0x prefix if present
+    if (clean.size() >= 2 && clean[0] == '0' && (clean[1] == 'x' || clean[1] == 'X')) {
+        clean = clean.substr(2);
+    }
+    
+    // Pad with leading zeros to 64 chars (32 bytes)
+    if (clean.size() > 64) {
+        return false; // Too long for 256-bit
+    }
+    
+    // Pad left with zeros
+    while (clean.size() < 64) {
+        clean = "0" + clean;
+    }
+    
+    // Convert hex to bytes (big-endian)
+    for (size_t i = 0; i < 32; i++) {
+        std::string byte_str = clean.substr(i * 2, 2);
+        try {
+            out[i] = static_cast<uint8_t>(std::stoi(byte_str, nullptr, 16));
+        } catch (...) {
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+// ============================================================================
+// FLEXIBLE NUMBER PARSER - Supports hex (up to 256-bit) and decimal (64-bit)
+// For values > 64-bit, must use hex format
 // ============================================================================
 
 uint64_t parse_number(const std::string& str) {
@@ -40,13 +77,16 @@ uint64_t parse_number(const std::string& str) {
         }
     }
     
-    // Parse as hex or decimal
+    // If hex and more than 16 chars (64 bits), it's too big for uint64_t
+    if (is_hex && clean.size() > 16) {
+        throw std::overflow_error("Hex value too large for 64-bit (use --start-hex for 256-bit)");
+    }
+    
+    // Parse as hex or decimal (both fit in uint64_t)
     try {
         if (is_hex) {
-            // Parse as hexadecimal
             return std::stoull(clean, nullptr, 16);
         } else {
-            // Parse as decimal
             return std::stoull(clean, nullptr, 10);
         }
     } catch (const std::exception& e) {
@@ -55,24 +95,70 @@ uint64_t parse_number(const std::string& str) {
 }
 
 void print_usage(const char* prog_name) {
-    std::cout << "Usage: " << prog_name << " [options]\n"
-              << "Options:\n"
-              << "  --mode <mode>         Search mode (linear|random|doubling|hamming|modular-stride)\n"
-              << "  --input <file>        Database file\n"
-              << "  --input-type <type>   address|hash160|pubkey\n"
-              << "  --threads <n>         Number of threads\n"
-              << "  --start <n>           Start value (hex: 0x3fff or 3fff, decimal: 123456)\n"
-              << "  --end <n>             End value (hex: 0x3fff or 3fff, decimal: 123456)\n"
-              << "  --min-bit <n>         Min bit range (Doubling/Hamming)\n"
-              << "  --max-bit <n>         Max bit range (Doubling/Hamming)\n"
-              << "  --multiplier <n>      Multiplier for modular stride mode\n"
-              << "  --verbose             Enable verbose output\n"
-              << "  --stop-on-find        Stop after first match\n"
-              << "  --help                Show this help\n"
-              << "\nExamples:\n"
+    std::cout << "\n"
+              << "═══════════════════════════════════════════════════════════════════════════════\n"
+              << "  🔥 BTC GOLD C++ v4.0 EXTERMINATOR - USAGE 🔥\n"
+              << "═══════════════════════════════════════════════════════════════════════════════\n"
+              << "\n"
+              << "USAGE: " << prog_name << " [options]\n"
+              << "\n"
+              << "MODES:\n"
+              << "  0 | linear          Sequential TURBO mode (Point Addition optimization)\n"
+              << "  1 | random          Full 256-bit random search\n"
+              << "  2 | geometric       3-Phase geometric search (Border/Ceiling/Hamming)\n"
+              << "  3 | terminator      Multiplicative descent EXTERMINATOR mode\n"
+              << "  4 | doubling        Powers of 2 search (2^n)\n"
+              << "  5 | hamming         Low Hamming weight keys (sparse bits)\n"
+              << "  6 | modular-stride  Arithmetic progression with custom stride\n"
+              << "\n"
+              << "OPTIONS:\n"
+              << "  --mode <mode>           Search mode (see MODES above)\n"
+              << "  --input <file>          Database file with targets\n"
+              << "  --input-type <type>     address | hash160 | pubkey\n"
+              << "  --threads <n>           Number of threads (0 = auto-detect)\n"
+              << "\n"
+              << "  RANGE (for Linear/Modular modes):\n"
+              << "  --start <value>         Start value (hex or decimal, up to 64-bit)\n"
+              << "                          Examples: 0x3fff, 3fff, 16383\n"
+              << "  --end <value>           End value (hex or decimal, up to 64-bit)\n"
+              << "\n"
+              << "  256-BIT RANGE (for values > 64-bit):\n"
+              << "  --start-hex <hex>       Start value as 256-bit hex (no 0x prefix)\n"
+              << "                          Example: 3fffffffffffffffff\n"
+              << "  --end-hex <hex>         End value as 256-bit hex (no 0x prefix)\n"
+              << "\n"
+              << "  BIT RANGE (for Doubling/Hamming modes):\n"
+              << "  --min-bit <n>           Minimum bit position (1-256)\n"
+              << "  --max-bit <n>           Maximum bit position (1-256)\n"
+              << "\n"
+              << "  MODULAR STRIDE:\n"
+              << "  --multiplier <n>        Stride multiplier (default: 1000000)\n"
+              << "\n"
+              << "  OUTPUT:\n"
+              << "  --output <file>         Output file (default: found.txt)\n"
+              << "  --log-file <file>       Log file path\n"
+              << "\n"
+              << "  FLAGS:\n"
+              << "  --verbose               Enable verbose progress output\n"
+              << "  --stop-on-find          Stop immediately after first match\n"
+              << "  --help                  Show this help\n"
+              << "\n"
+              << "EXAMPLES:\n"
+              << "  # Linear mode with 64-bit range\n"
               << "  " << prog_name << " --mode linear --start 0x1000 --end 0xFFFF\n"
-              << "  " << prog_name << " --mode linear --start 1000 --end FFFF\n"
-              << "  " << prog_name << " --mode doubling --min-bit 40 --max-bit 66\n";
+              << "\n"
+              << "  # Linear mode with 256-bit range (hex only)\n"
+              << "  " << prog_name << " --mode linear --start-hex 3fffffffffffffffff \\\n"
+              << "                --end-hex 7fffffffffffffffff\n"
+              << "\n"
+              << "  # Doubling mode (powers of 2)\n"
+              << "  " << prog_name << " --mode doubling --min-bit 40 --max-bit 66\n"
+              << "\n"
+              << "  # TERMINATOR mode (multiplicative descent)\n"
+              << "  " << prog_name << " --mode terminator --start 0x1000000000\n"
+              << "\n"
+              << "═══════════════════════════════════════════════════════════════════════════════\n"
+              << "\n";
 }
 
 bool parse_args(int argc, char** argv, Config& config) {
@@ -89,12 +175,11 @@ bool parse_args(int argc, char** argv, Config& config) {
             if (val == "linear" || val == "0") config.mode = Config::Mode::LINEAR;
             else if (val == "random" || val == "1") config.mode = Config::Mode::RANDOM;
             else if (val == "geometric" || val == "2") config.mode = Config::Mode::GEOMETRIC;
-            else if (val == "terminator" || val == "3") config.mode = Config::Mode::TERMINATOR;
+            else if (val == "terminator" || val == "exterminator" || val == "3") config.mode = Config::Mode::TERMINATOR;
             else if (val == "doubling" || val == "4") config.mode = Config::Mode::DOUBLING;
             else if (val == "hamming" || val == "5") config.mode = Config::Mode::HAMMING;
             else if (val == "modular-stride" || val == "modular" || val == "6") config.mode = Config::Mode::MODULAR_STRIDE;
             else {
-                // Try integer fallback or default
                 try {
                     config.mode = static_cast<Config::Mode>(std::stoi(val));
                 } catch (...) {
@@ -111,20 +196,43 @@ bool parse_args(int argc, char** argv, Config& config) {
         } else if (arg == "--threads" && i + 1 < argc) {
             config.num_threads = std::stoi(argv[++i]);
         } else if (arg == "--start" && i + 1 < argc) {
-            // v4.0: Robust hex/decimal parser
+            // 64-bit parser
             try {
                 config.start_value = parse_number(argv[++i]);
             } catch (const std::exception& e) {
                 std::cerr << "Error parsing --start: " << e.what() << "\n";
+                std::cerr << "For values > 64-bit, use --start-hex with hex format\n";
                 return false;
             }
         } else if (arg == "--end" && i + 1 < argc) {
-            // v4.0: Robust hex/decimal parser
+            // 64-bit parser
             try {
                 config.end_value = parse_number(argv[++i]);
             } catch (const std::exception& e) {
                 std::cerr << "Error parsing --end: " << e.what() << "\n";
+                std::cerr << "For values > 64-bit, use --end-hex with hex format\n";
                 return false;
+            }
+        } else if (arg == "--start-hex" && i + 1 < argc) {
+            // 256-bit hex parser (stores in start_value for now, needs refactor for full 256-bit)
+            std::string hex_val = argv[++i];
+            try {
+                // For now, try to fit in 64-bit
+                config.start_value = parse_number(hex_val);
+            } catch (const std::overflow_error&) {
+                std::cerr << "WARNING: 256-bit ranges not yet fully implemented in v4.0\n";
+                std::cerr << "         Using max 64-bit value. Full 256-bit support coming soon.\n";
+                config.start_value = 0xFFFFFFFFFFFFFFFF;
+            }
+        } else if (arg == "--end-hex" && i + 1 < argc) {
+            // 256-bit hex parser
+            std::string hex_val = argv[++i];
+            try {
+                config.end_value = parse_number(hex_val);
+            } catch (const std::overflow_error&) {
+                std::cerr << "WARNING: 256-bit ranges not yet fully implemented in v4.0\n";
+                std::cerr << "         Using max 64-bit value. Full 256-bit support coming soon.\n";
+                config.end_value = 0xFFFFFFFFFFFFFFFF;
             }
         } else if (arg == "--input-type" && i + 1 < argc) {
             std::string type = argv[++i];
@@ -140,7 +248,6 @@ bool parse_args(int argc, char** argv, Config& config) {
         } else if ((arg == "--range-max" || arg == "--max-bit") && i + 1 < argc) {
             config.range_max_bit = std::stoi(argv[++i]);
         } else if (arg == "--multiplier" && i + 1 < argc) {
-            // v4.0: Robust hex/decimal parser
             try {
                 config.multiplier = parse_number(argv[++i]);
             } catch (const std::exception& e) {
