@@ -200,6 +200,25 @@ public:
     }
     
     // ========================================================================
+    // ARITHMETIC - Multiplication (BigInt256 * uint64_t)
+    // ========================================================================
+
+    BigInt256 operator*(uint64_t rhs) const {
+        BigInt256 result;
+        uint64_t carry = 0;
+
+        for (int i = 0; i < 4; i++) {
+            __uint128_t prod = static_cast<__uint128_t>(limbs[i]) * rhs + carry;
+            result.limbs[i] = static_cast<uint64_t>(prod);
+            carry = static_cast<uint64_t>(prod >> 64);
+        }
+
+        // Note: Carry at the end is discarded (overflow for 256-bit result)
+        // This is expected behavior for fixed-width arithmetic
+        return result;
+    }
+
+    // ========================================================================
     // ARITHMETIC - Division (for range splitting)
     // ========================================================================
     
