@@ -25,6 +25,7 @@ struct HitBuffer {
         Hash160 hash160;
         std::string address;
         std::string wif_compressed;
+        std::string extra_info; // v4.0: Added for detailed logging
     };
     
     std::vector<Hit> hits;
@@ -102,8 +103,9 @@ private:
     // Helpers
     bool check_match(const PrivateKey& privkey, const PublicKey& pubkey,
                      const Hash160& hash160);
+    // Updated signature for v4.0 detailed output support
     void format_key_result(const PrivateKey& privkey, const Hash160& hash160,
-                          HitBuffer::Hit& hit);
+                          HitBuffer::Hit& hit, uint64_t int_val);
     void flush_hits();
     void report_progress();
 };
