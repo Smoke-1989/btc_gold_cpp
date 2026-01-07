@@ -68,6 +68,11 @@ public:
     // Main entry point
     void run();
     
+    // Graceful stop method for signal handlers
+    void stop() {
+        should_stop_ = true;
+    }
+    
     // Mode-specific implementations
     void run_linear_mode();
     void run_random_mode();
