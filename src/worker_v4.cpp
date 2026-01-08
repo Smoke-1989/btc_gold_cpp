@@ -41,7 +41,7 @@ WorkerEngine::~WorkerEngine() {
 void WorkerEngine::run() {
     auto start_time = std::chrono::high_resolution_clock::now();
     
-    logger_.info("[INFO] Starting BTC GOLD v4.1 EXTERMINATOR - ENTERPRISE EDITION");
+    logger_.info("[INFO] Starting BTC GOLD v4.2 EXTERMINATOR - ENTERPRISE EDITION");
     logger_.info("[INFO] Mode: " + std::to_string(static_cast<int>(config_.mode)));
     logger_.info("[INFO] Threads: " + std::to_string(
         config_.num_threads > 0 ? config_.num_threads : std::thread::hardware_concurrency()));
@@ -91,7 +91,7 @@ void WorkerEngine::run() {
 }
 
 // ============================================================================
-// MODE 1: LINEAR (TURBO via Point Addition) - FULL 256-BIT SUPPORT
+// MODE 1: LINEAR - ENTERPRISE GRADE (ZERO DUPLICATES)
 // ============================================================================
 
 void WorkerEngine::run_linear_mode() {
@@ -126,10 +126,8 @@ void WorkerEngine::run_linear_mode() {
 void WorkerEngine::linear_worker_turbo(int thread_id) {
     try {
         if (config_.use_256bit_range) {
-            // 🔥🔥🔥 256-BIT LINEAR MODE 🔥🔥🔥
             linear_worker_256bit(thread_id);
         } else {
-            // Legacy 64-bit mode
             linear_worker_64bit(thread_id);
         }
     } catch (const std::exception& e) {
@@ -138,34 +136,44 @@ void WorkerEngine::linear_worker_turbo(int thread_id) {
 }
 
 // ============================================================================
-// LINEAR WORKER - 256-BIT MODE (PRODUCTION)
+// LINEAR WORKER - 256-BIT (ENTERPRISE: STRICT PARTITIONING)
 // ============================================================================
 
 void WorkerEngine::linear_worker_256bit(int thread_id) {
-    // Initialize BigInt256 range
     BigInt256 start_big(config_.start_key_256);
     BigInt256 end_big(config_.end_key_256);
-    BigInt256 range = end_big - start_big;
+    BigInt256 total_range = end_big - start_big;
     
-    int num_workers = std::max(1, (int)workers_.size());
-    BigInt256 thread_chunk = range / num_workers;
-    BigInt256 thread_start = start_big + (thread_chunk * thread_id);
-    BigInt256 thread_end = (thread_id == num_workers - 1) ? end_big : thread_start + thread_chunk;
+    int num_workers = workers_.size();
+    BigInt256 chunk_size = total_range / num_workers;
     
-    // Initialize current position
+    // CRITICAL: Semi-open intervals [start, end) - NO OVERLAP
+    BigInt256 thread_start = start_big + (chunk_size * thread_id);
+    BigInt256 thread_end;
+    
+    if (thread_id == num_workers - 1) {
+        thread_end = end_big; // Last thread covers remainder
+    } else {
+        thread_end = thread_start + chunk_size; // [start, start+chunk)
+    }
+    
+    // Handle edge case: If chunk_size is zero (range < threads), idle this thread
+    if (chunk_size.is_zero() && thread_id > 0) {
+        logger_.info("[T" + std::to_string(thread_id) + "] Idle (range too small for this thread)");
+        return;
+    }
+    
     BigInt256 current = thread_start;
     PrivateKey privkey;
     current.to_privkey(privkey);
     
-    // Get initial pubkey and hash160
     PublicKey pubkey = secp256k1_.pubkey_compressed(privkey);
     Hash160 hash160 = secp256k1_.hash160(pubkey);
     
-    logger_.info("[T" + std::to_string(thread_id) + "] Starting at: 0x" + current.to_hex());
+    logger_.info("[T" + std::to_string(thread_id) + "] Range: 0x" + thread_start.to_hex() + 
+                " to 0x" + thread_end.to_hex());
     
-    // 💥 MAIN LOOP - TURBO MODE with Point Addition
     while (current < thread_end && !should_stop_) {
-        // Check for match
         if (check_match(privkey, pubkey, hash160)) {
             HitBuffer::Hit hit;
             hit.privkey = privkey;
@@ -177,7 +185,6 @@ void WorkerEngine::linear_worker_256bit(int thread_id) {
             hit_buffer_.add(hit);
             found_count_++;
             logger_.warning("[💰 FOUND] Match at 0x" + current.to_hex());
-            
             flush_hits();
             
             if (config_.stop_on_find) {
@@ -186,19 +193,14 @@ void WorkerEngine::linear_worker_256bit(int thread_id) {
             }
         }
         
-        // TURBO: Increment via Point Addition (EC)
         secp256k1_.pubkey_tweak_add(pubkey, 1);
         hash160 = secp256k1_.hash160(pubkey);
-        
-        // Increment BigInt counter
         ++current;
         
-        // Update privkey periodically (every 1M keys) for accuracy
-        if ((keys_checked_.load() & 0xFFFFF) == 0) {
+        // Periodic privkey resync every 1M keys
+        if ((keys_checked_.fetch_add(1) & 0xFFFFF) == 0) {
             current.to_privkey(privkey);
         }
-        
-        keys_checked_++;
     }
     
     flush_hits();
@@ -206,25 +208,39 @@ void WorkerEngine::linear_worker_256bit(int thread_id) {
 }
 
 // ============================================================================
-// LINEAR WORKER - 64-BIT MODE (Legacy)
+// LINEAR WORKER - 64-BIT (ENTERPRISE: STRICT PARTITIONING)
 // ============================================================================
 
 void WorkerEngine::linear_worker_64bit(int thread_id) {
-    uint64_t range = config_.end_value - config_.start_value;
-    uint64_t num_workers = std::max(1, (int)workers_.size());
-    uint64_t thread_chunk = range / num_workers;
-    uint64_t start = config_.start_value + (thread_id * thread_chunk);
-    uint64_t end = (thread_id == (int)num_workers - 1) ? config_.end_value : start + thread_chunk;
+    uint64_t total_range = config_.end_value - config_.start_value;
+    int num_workers = workers_.size();
+    uint64_t chunk_size = total_range / num_workers;
+    
+    uint64_t thread_start = config_.start_value + (chunk_size * thread_id);
+    uint64_t thread_end;
+    
+    if (thread_id == num_workers - 1) {
+        thread_end = config_.end_value;
+    } else {
+        thread_end = thread_start + chunk_size;
+    }
+    
+    // Edge case: idle if range too small
+    if (chunk_size == 0 && thread_id > 0) {
+        logger_.info("[T" + std::to_string(thread_id) + "] Idle (range too small)");
+        return;
+    }
     
     PrivateKey privkey;
-    secp256k1_.int_to_privkey(start, privkey);
+    secp256k1_.int_to_privkey(thread_start, privkey);
     
     PublicKey pubkey = secp256k1_.pubkey_compressed(privkey);
     Hash160 hash160 = secp256k1_.hash160(pubkey);
     
-    logger_.info("[T" + std::to_string(thread_id) + "] Starting at: " + std::to_string(start));
+    logger_.info("[T" + std::to_string(thread_id) + "] Range: " + std::to_string(thread_start) + 
+                " to " + std::to_string(thread_end));
     
-    for (uint64_t current = start; current < end && !should_stop_; current++) {
+    for (uint64_t current = thread_start; current < thread_end && !should_stop_; current++) {
         if (check_match(privkey, pubkey, hash160)) {
             HitBuffer::Hit hit;
             secp256k1_.int_to_privkey(current, hit.privkey);
@@ -236,7 +252,6 @@ void WorkerEngine::linear_worker_64bit(int thread_id) {
             hit_buffer_.add(hit);
             found_count_++;
             logger_.warning("[💰 FOUND] Match at " + std::to_string(current));
-            
             flush_hits();
             
             if (config_.stop_on_find) {
@@ -246,7 +261,6 @@ void WorkerEngine::linear_worker_64bit(int thread_id) {
         
         secp256k1_.pubkey_tweak_add(pubkey, 1);
         hash160 = secp256k1_.hash160(pubkey);
-        
         keys_checked_++;
     }
     
@@ -284,7 +298,7 @@ void WorkerEngine::random_worker(int thread_id) {
         
         logger_.info("[T" + std::to_string(thread_id) + "] Random worker started");
         
-        for (uint64_t i = 0; i < UINT64_MAX && !should_stop_; i++) {
+        while (!should_stop_) {
             PrivateKey privkey;
             for (int k = 0; k < 32; k += 8) {
                 uint64_t part = dist(rng);
@@ -305,7 +319,6 @@ void WorkerEngine::random_worker(int thread_id) {
                 hit_buffer_.add(hit);
                 found_count_++;
                 logger_.warning("[💰 FOUND] Random match");
-                
                 flush_hits();
                 
                 if (config_.stop_on_find) {
@@ -326,7 +339,7 @@ void WorkerEngine::random_worker(int thread_id) {
 
 void WorkerEngine::run_geometric_mode() {
     logger_.info("[GEOMETRIC] 3-Phase: Border, Ceiling, Hamming");
-    logger_.debug("[GEOMETRIC] Geometric mode implementation pending");
+    logger_.debug("[GEOMETRIC] Implementation pending - future release");
 }
 
 void WorkerEngine::geometric_worker(int thread_id) {
@@ -334,16 +347,157 @@ void WorkerEngine::geometric_worker(int thread_id) {
 }
 
 // ============================================================================
-// MODE 4: TERMINATOR (Multiplicative Descent)
+// MODE 4: TERMINATOR - ENTERPRISE GRADE (GEOMETRIC PROGRESSION)
 // ============================================================================
 
 void WorkerEngine::run_terminator_mode() {
-    logger_.info("[TERMINATOR] Multiplicative descent mode");
-    logger_.debug("[TERMINATOR] Terminator mode implementation pending");
+    logger_.info("[TERMINATOR] 🔥 Multiplicative Geometric Progression Mode");
+    
+    if (config_.use_256bit_range) {
+        logger_.info("[TERMINATOR] Using 256-bit start/end range");
+    } else {
+        logger_.info("[TERMINATOR] Using 64-bit start range");
+    }
+    
+    logger_.info("[TERMINATOR] Multiplier: " + std::to_string(config_.multiplier));
+    
+    int num_threads = config_.num_threads > 0 ? config_.num_threads : std::thread::hardware_concurrency();
+    
+    for (int i = 0; i < num_threads; i++) {
+        workers_.emplace_back(&WorkerEngine::terminator_worker, this, i);
+    }
+    
+    auto progress_thread = std::thread(&WorkerEngine::report_progress, this);
+    
+    for (auto& worker : workers_) {
+        if (worker.joinable()) worker.join();
+    }
+    
+    should_stop_ = true;
+    if (progress_thread.joinable()) progress_thread.join();
 }
 
 void WorkerEngine::terminator_worker(int thread_id) {
-    logger_.info("[T" + std::to_string(thread_id) + "] Terminator worker");
+    try {
+        logger_.info("[T" + std::to_string(thread_id) + "] Terminator worker started");
+        
+        if (config_.use_256bit_range) {
+            // 256-bit geometric progression
+            BigInt256 current(config_.start_key_256);
+            BigInt256 end_limit(config_.end_key_256);
+            BigInt256 multiplier(config_.multiplier);
+            
+            // Thread offset: Each thread starts at start * multiplier^thread_id
+            for (int offset = 0; offset < thread_id; offset++) {
+                current = current * config_.multiplier;
+                if (current > end_limit) {
+                    logger_.info("[T" + std::to_string(thread_id) + "] Start position exceeds end limit - idle");
+                    return;
+                }
+            }
+            
+            logger_.info("[T" + std::to_string(thread_id) + "] Starting at: 0x" + current.to_hex());
+            
+            int num_workers = workers_.size();
+            BigInt256 step_multiplier(1);
+            for (int i = 0; i < num_workers; i++) {
+                step_multiplier = step_multiplier * config_.multiplier;
+            }
+            
+            while (current <= end_limit && !should_stop_) {
+                PrivateKey privkey;
+                current.to_privkey(privkey);
+                
+                PublicKey pubkey = secp256k1_.pubkey_compressed(privkey);
+                Hash160 hash160 = secp256k1_.hash160(pubkey);
+                
+                if (check_match(privkey, pubkey, hash160)) {
+                    HitBuffer::Hit hit;
+                    hit.privkey = privkey;
+                    hit.hash160 = hash160;
+                    hit.address = secp256k1_.hash160_to_address(hash160);
+                    hit.wif_compressed = secp256k1_.privkey_to_wif(privkey, true);
+                    hit.extra_info = current.to_hex();
+                    
+                    hit_buffer_.add(hit);
+                    found_count_++;
+                    logger_.warning("[💰 FOUND] Match at 0x" + current.to_hex());
+                    flush_hits();
+                    
+                    if (config_.stop_on_find) {
+                        should_stop_ = true;
+                        break;
+                    }
+                }
+                
+                current = current * step_multiplier;
+                keys_checked_++;
+            }
+            
+        } else {
+            // 64-bit geometric progression (legacy)
+            uint64_t current = config_.start_value;
+            uint64_t multiplier = config_.multiplier;
+            
+            // Thread offset
+            for (int offset = 0; offset < thread_id; offset++) {
+                if (current > UINT64_MAX / multiplier) {
+                    logger_.info("[T" + std::to_string(thread_id) + "] Overflow - idle");
+                    return;
+                }
+                current *= multiplier;
+            }
+            
+            logger_.info("[T" + std::to_string(thread_id) + "] Starting at: " + std::to_string(current));
+            
+            int num_workers = workers_.size();
+            uint64_t step_multiplier = 1;
+            for (int i = 0; i < num_workers; i++) {
+                step_multiplier *= multiplier;
+            }
+            
+            while (current <= config_.end_value && !should_stop_) {
+                PrivateKey privkey;
+                secp256k1_.int_to_privkey(current, privkey);
+                
+                PublicKey pubkey = secp256k1_.pubkey_compressed(privkey);
+                Hash160 hash160 = secp256k1_.hash160(pubkey);
+                
+                if (check_match(privkey, pubkey, hash160)) {
+                    HitBuffer::Hit hit;
+                    hit.privkey = privkey;
+                    hit.hash160 = hash160;
+                    hit.address = secp256k1_.hash160_to_address(hash160);
+                    hit.wif_compressed = secp256k1_.privkey_to_wif(privkey, true);
+                    hit.extra_info = std::to_string(current);
+                    
+                    hit_buffer_.add(hit);
+                    found_count_++;
+                    logger_.warning("[💰 FOUND] Match at " + std::to_string(current));
+                    flush_hits();
+                    
+                    if (config_.stop_on_find) {
+                        should_stop_ = true;
+                        break;
+                    }
+                }
+                
+                if (current > UINT64_MAX / step_multiplier) {
+                    logger_.info("[T" + std::to_string(thread_id) + "] Overflow - stopping");
+                    break;
+                }
+                
+                current *= step_multiplier;
+                keys_checked_++;
+            }
+        }
+        
+        flush_hits();
+        logger_.info("[T" + std::to_string(thread_id) + "] Completed");
+        
+    } catch (const std::exception& e) {
+        logger_.error("[ERROR] Terminator worker: " + std::string(e.what()));
+    }
 }
 
 // ============================================================================
@@ -384,7 +538,6 @@ void WorkerEngine::doubling_worker() {
                 hit_buffer_.add(hit);
                 found_count_++;
                 logger_.warning("[💰 FOUND] 2^" + std::to_string(bit));
-                
                 flush_hits();
                 
                 if (config_.stop_on_find) {
@@ -451,7 +604,6 @@ void WorkerEngine::hamming_worker() {
                     hit_buffer_.add(hit);
                     found_count_++;
                     logger_.warning("[💰 FOUND] 2^" + std::to_string(bit1) + " + 2^" + std::to_string(bit2));
-                    
                     flush_hits();
                     
                     if (config_.stop_on_find) {
@@ -521,7 +673,6 @@ void WorkerEngine::modular_stride_worker(int thread_id) {
                 hit_buffer_.add(hit);
                 found_count_++;
                 logger_.warning("[💰 FOUND] Match at " + std::to_string(current));
-                
                 flush_hits();
                 
                 if (config_.stop_on_find) {
@@ -546,6 +697,7 @@ void WorkerEngine::modular_stride_worker(int thread_id) {
 
 bool WorkerEngine::check_match(const PrivateKey& privkey, const PublicKey& pubkey,
                                const Hash160& hash160) {
+    (void)privkey; (void)pubkey; // Suppress unused warnings
     return database_.contains(hash160);
 }
 
@@ -595,6 +747,7 @@ void WorkerEngine::flush_hits() {
             outfile << "Hash160:            " << hash160_hex << "\n";
             outfile << "WIF (Compressed):   " << hit.wif_compressed << "\n";
             outfile << "WIF (Uncompressed): " << wif_uncompressed << "\n";
+            outfile << "Extra Info:         " << hit.extra_info << "\n";
             outfile << "================================================================================\n";
         }
         
