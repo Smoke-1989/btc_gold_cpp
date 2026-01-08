@@ -5,6 +5,7 @@
 #include <array>
 #include <string>
 #include <cstring>
+#include <vector>
 
 namespace btc_gold {
 
@@ -200,9 +201,10 @@ public:
     }
     
     // ========================================================================
-    // ARITHMETIC - Multiplication (BigInt256 * uint64_t)
+    // ARITHMETIC - Multiplication
     // ========================================================================
 
+    // BigInt256 * uint64_t
     BigInt256 operator*(uint64_t rhs) const {
         BigInt256 result;
         uint64_t carry = 0;
@@ -213,8 +215,23 @@ public:
             carry = static_cast<uint64_t>(prod >> 64);
         }
 
-        // Note: Carry at the end is discarded (overflow for 256-bit result)
-        // This is expected behavior for fixed-width arithmetic
+        return result;
+    }
+
+    // BigInt256 * BigInt256 (O(N^2) naive multiplication)
+    BigInt256 operator*(const BigInt256& rhs) const {
+        BigInt256 result;
+        
+        // 4x4 limb multiplication
+        for (int i = 0; i < 4; i++) {
+            uint64_t carry = 0;
+            for (int j = 0; j < 4 - i; j++) { // Only compute lower 4 limbs (256-bit truncate)
+                __uint128_t prod = static_cast<__uint128_t>(limbs[i]) * rhs.limbs[j] + result.limbs[i + j] + carry;
+                result.limbs[i + j] = static_cast<uint64_t>(prod);
+                carry = static_cast<uint64_t>(prod >> 64);
+            }
+        }
+        
         return result;
     }
 
