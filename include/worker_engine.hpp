@@ -10,6 +10,27 @@
 #include "config.hpp"
 #include "logger.hpp"
 
+// Simple uint256 implementation
+struct uint256 {
+    uint64_t data[4];
+    
+    uint256() : data{0, 0, 0, 0} {}
+    uint256(uint64_t a, uint64_t b, uint64_t c, uint64_t d) : data{a, b, c, d} {}
+    
+    bool operator<(const uint256& other) const {
+        for(int i = 3; i >= 0; i--) {
+            if(data[i] != other.data[i]) return data[i] < other.data[i];
+        }
+        return false;
+    }
+    
+    bool operator<=(const uint256& other) const;
+    bool operator>(const uint256& other) const;
+    bool operator==(const uint256& other) const;
+    uint256 operator+(const uint256& other) const;
+    uint256 operator*(uint64_t mul) const;
+};
+
 struct WorkerConfig {
     int threads;
     std::string input_type;
@@ -29,15 +50,19 @@ public:
     void run();
     void stop();
     
+    // Public for callbacks
+    std::vector<std::string> found_keys_;
+    std::mutex results_mutex_;
+    std::vector<std::string> targets_;
+    Logger& logger_;
+    std::atomic<uint64_t> keys_checked_;
+    std::atomic<bool> running_;
+    
 private:
     WorkerConfig config_;
-    Logger& logger_;
     std::vector<std::thread> workers_;
-    std::atomic<bool> running_;
-    std::atomic<uint64_t> keys_checked_;
-    std::mutex results_mutex_;
-    std::vector<std::string> found_keys_;
     
+    // Mode runners
     void run_linear_mode();
     void run_random_mode();
     void run_geometric_mode();
@@ -49,17 +74,19 @@ private:
     void run_entropy_mode();
     void run_collision_mode();
     
-    void linear_worker(int thread_id);
+    // Worker threads
+    void linear_worker(int thread_id, uint256 start, uint256 end);
     void random_worker(int thread_id);
-    void geometric_worker(int thread_id);
-    void terminator_worker(int thread_id);
-    void doubling_worker();
-    void hamming_worker(int thread_id);
+    void geometric_worker(int thread_id, int min_bit, int max_bit);
+    void terminator_worker(int thread_id, uint256 start, uint256 end, int mul);
+    void doubling_worker(int min_bit, int max_bit);
+    void hamming_worker(int thread_id, int min_bit, int max_bit);
     void modular_stride_worker(int thread_id);
     void vanity_worker(int thread_id);
     void entropy_worker(int thread_id);
     void collision_worker(int thread_id);
     
+    // Utilities
     void load_targets();
     void save_results();
 };
