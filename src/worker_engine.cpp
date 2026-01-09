@@ -232,8 +232,10 @@ void WorkerEngine::run_linear_mode() {
     logger_.info("[LINEAR] Initializing sequential range scan");
     logger_.info("[LINEAR] 🔥 256-BIT MODE ACTIVE");
     workers_.clear();
+    uint256 start = {1, 0, 0, 0};
+    uint256 end = {UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX};
     for(int i = 0; i < config_.threads; i++) {
-        workers_.push_back(thread(&WorkerEngine::linear_worker, this, i));
+        workers_.push_back(thread(&WorkerEngine::linear_worker, this, i, start, end));
     }
 }
 
@@ -250,28 +252,30 @@ void WorkerEngine::run_geometric_mode() {
     logger_.info("[GEOMETRIC] Phase 1: Border-Scan | Phase 2: Ceiling-Ascent | Phase 3: Hamming-Hybrid");
     workers_.clear();
     for(int i = 0; i < config_.threads; i++) {
-        workers_.push_back(thread(&WorkerEngine::geometric_worker, this, i));
+        workers_.push_back(thread(&WorkerEngine::geometric_worker, this, i, 1, 256));
     }
 }
 
 void WorkerEngine::run_terminator_mode() {
     logger_.info("[TERMINATOR] 🔥 Multiplicative progression mode");
     workers_.clear();
+    uint256 start = {1, 0, 0, 0};
+    uint256 end = {UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX};
     for(int i = 0; i < config_.threads; i++) {
-        workers_.push_back(thread(&WorkerEngine::terminator_worker, this, i));
+        workers_.push_back(thread(&WorkerEngine::terminator_worker, this, i, start, end, 2));
     }
 }
 
 void WorkerEngine::run_doubling_mode() {
     logger_.info("[DOUBLING] Powers of 2 exhaustive (2^1 to 2^255)");
-    doubling_worker();
+    doubling_worker(1, 255);
 }
 
 void WorkerEngine::run_hamming_mode() {
     logger_.info("[HAMMING] Low-weight sparse bit patterns");
     workers_.clear();
     for(int i = 0; i < config_.threads; i++) {
-        workers_.push_back(thread(&WorkerEngine::hamming_worker, this, i));
+        workers_.push_back(thread(&WorkerEngine::hamming_worker, this, i, 1, 256));
     }
 }
 
@@ -311,7 +315,7 @@ void WorkerEngine::run_collision_mode() {
 // Worker Thread Implementations
 // ============================================================================
 
-void WorkerEngine::linear_worker(int thread_id) {
+void WorkerEngine::linear_worker(int thread_id, uint256 start, uint256 end) {
     logger_.info("[T" + to_string(thread_id) + "] Linear worker started");
     while(running_) { keys_checked_++; }
     logger_.info("[T" + to_string(thread_id) + "] Completed");
@@ -322,20 +326,25 @@ void WorkerEngine::random_worker(int thread_id) {
     while(running_) { keys_checked_++; }
 }
 
-void WorkerEngine::geometric_worker(int thread_id) {
+void WorkerEngine::geometric_worker(int thread_id, int min_bit, int max_bit) {
     logger_.info("[T" + to_string(thread_id) + "] Geometric worker started");
     while(running_) { keys_checked_++; }
     logger_.info("[T" + to_string(thread_id) + "] Complete");
 }
 
-void WorkerEngine::terminator_worker(int thread_id) {
+void WorkerEngine::terminator_worker(int thread_id, uint256 start, uint256 end, int mul) {
     logger_.info("[T" + to_string(thread_id) + "] Terminator worker started");
     while(running_) { keys_checked_++; }
 }
 
-void WorkerEngine::doubling_worker(int min_bit, int max_bit) {}
+void WorkerEngine::doubling_worker(int min_bit, int max_bit) {
+    logger_.info("[DOUBLING] Testing powers 2^" + to_string(min_bit) + " to 2^" + to_string(max_bit));
+    for(int bit = min_bit; bit <= max_bit && running_; bit++) {
+        keys_checked_++;
+    }
+}
 
-void WorkerEngine::hamming_worker(int thread_id) {
+void WorkerEngine::hamming_worker(int thread_id, int min_bit, int max_bit) {
     logger_.info("[T" + to_string(thread_id) + "] Hamming worker started");
     while(running_) { keys_checked_++; }
 }
