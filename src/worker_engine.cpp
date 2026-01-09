@@ -352,45 +352,58 @@ void WorkerEngine::save_results() {
 // ============================================================================
 
 bool WorkerEngine::check_key(const uint256& secret) {
-    // 1. Convert secret to 32-byte buffer
+    // Convert secret to 32-byte buffer
     uint8_t sec_buf[32];
     uint256_to_bytes(secret, sec_buf);
 
-    // 2. Derive Public Key (Compressed: 33 bytes)
-    // Using singleton Secp256k1 class from secp256k1_wrapper.h
-    static Secp256k1& ctx = Secp256k1::get_instance();
-    
-    std::vector<uint8_t> pubkey;
-    if (!ctx.get_pubkey_compressed(sec_buf, pubkey)) {
-        return false; // Invalid private key (e.g. >= curve order)
+    // Convert to project-native types
+    btc_gold::PrivateKey priv{};
+    std::memcpy(priv.data(), sec_buf, priv.size());
+
+    // Thread-local crypto contexts (enterprise-grade: no shared mutable state)
+    static thread_local btc_gold::Secp256k1Wrapper secp;
+
+    // Validate privkey before deriving pubkey
+    if(!secp.verify_privkey(priv)) {
+        return false;
     }
 
-    // 3. Compute Hash160 (SHA256 + RIPEMD160)
-    // Using Hash160 class/functions from hash160.h
-    uint8_t hash[20];
-    Hash160::hash_pubkey(pubkey.data(), pubkey.size(), hash);
+    // Derive compressed pubkey and compute HASH160
+    const btc_gold::PublicKey pub = secp.pubkey_compressed(priv);
+    const btc_gold::Hash160 h160 = secp.hash160(pub);
 
-    // 4. Convert to Hex String for lookup
+    // Convert HASH160 to lowercase hex string for lookup
     string hash_hex;
-    bytes_to_hex(hash, 20, hash_hex);
+    bytes_to_hex(h160.data(), h160.size(), hash_hex);
 
-    // 5. Check against targets
-    if (g_targets_set.count(hash_hex)) {
-        // MATCH FOUND!
-        string priv_hex = uint256_to_hex(secret);
-        
+    // Check against targets
+    if(g_targets_set.count(hash_hex)) {
+        const string priv_hex = uint256_to_hex(secret);
+
+        // Enrich output with address + WIF (robust forensic output)
+        const string address = secp.pubkey_to_address(pub);
+        const string wif_c   = secp.privkey_to_wif(priv, true);
+        const string wif_u   = secp.privkey_to_wif(priv, false);
+
         lock_guard<mutex> lock(results_mutex_);
-        found_keys_.push_back(priv_hex + " -> " + hash_hex);
-        
-        // Log immediately to console
+        found_keys_.push_back(
+            "priv=" + priv_hex +
+            " hash160=" + hash_hex +
+            " addr=" + address +
+            " wif_c=" + wif_c +
+            " wif_u=" + wif_u
+        );
+
         logger_.info("\n[!!! FOUND MATCH !!!] Private Key: " + priv_hex);
         logger_.info("                      Hash160:     " + hash_hex);
-        
-        if (config_.stop_on_find) {
+        logger_.info("                      Address:    " + address);
+
+        if(config_.stop_on_find) {
             running_ = false;
         }
         return true;
     }
+
     return false;
 }
 
