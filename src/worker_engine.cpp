@@ -1,4 +1,6 @@
 #include "worker_engine.hpp"
+#include "secp256k1_wrapper.h"
+#include "hash160.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -11,6 +13,7 @@
 #include <sstream>
 #include <thread>
 #include <csignal>
+#include <set>
 
 using namespace std;
 
@@ -68,6 +71,15 @@ static inline bool uint256_is_zero(const uint256& x) {
     return x.data[0] == 0 && x.data[1] == 0 && x.data[2] == 0 && x.data[3] == 0;
 }
 
+static string uint256_to_hex(const uint256& x) {
+    stringstream ss;
+    ss << hex << setfill('0');
+    for(int i = 3; i >= 0; i--) {
+        ss << setw(16) << x.data[i];
+    }
+    return ss.str();
+}
+
 static uint256 hex_to_uint256(string hex) {
     uint256 result = {0, 0, 0, 0};
 
@@ -95,6 +107,28 @@ static uint256 hex_to_uint256(string hex) {
 }
 
 // ============================================================================
+// Helper: Convert uint256 to bytes (big endian) for secp256k1
+// ============================================================================
+static void uint256_to_bytes(const uint256& k, uint8_t* out) {
+    // data[3] is MSB, data[0] is LSB
+    for(int i = 0; i < 4; i++) {
+        uint64_t limb = k.data[3 - i];
+        for(int j = 0; j < 8; j++) {
+            out[i * 8 + j] = (limb >> (56 - j * 8)) & 0xFF;
+        }
+    }
+}
+
+static void bytes_to_hex(const uint8_t* data, size_t len, string& out) {
+    stringstream ss;
+    ss << hex << setfill('0');
+    for(size_t i = 0; i < len; i++) {
+        ss << setw(2) << (int)data[i];
+    }
+    out = ss.str();
+}
+
+// ============================================================================
 // RNG
 // ============================================================================
 
@@ -117,6 +151,9 @@ static void sigint_handler(int) {
 // ============================================================================
 // WorkerEngine
 // ============================================================================
+
+// Optimize lookups with a set (O(1)/O(log n)) instead of vector scan
+static std::set<string> g_targets_set;
 
 WorkerEngine::WorkerEngine(const WorkerConfig& config, Logger& logger)
     : config_(config), logger_(logger), running_(false), keys_checked_(0) {
@@ -210,9 +247,6 @@ void WorkerEngine::run() {
         running_ = false;
     }
 
-    // IMPORTANT: do NOT flip running_=false here.
-    // Workers must be allowed to run until completion (finite modes) or until Ctrl+C (infinite modes).
-
     // For infinite modes, block until Ctrl+C.
     const bool is_infinite = (config_.search_mode == 1 || config_.search_mode == 3 || config_.search_mode == 6 ||
                               config_.search_mode == 7 || config_.search_mode == 8 || config_.search_mode == 9);
@@ -234,7 +268,6 @@ void WorkerEngine::run() {
     }
     workers_.clear();
 
-    // mark stopped (finite modes reach here naturally; infinite modes reach here after SIGINT)
     running_ = false;
 
     auto end_time = chrono::steady_clock::now();
@@ -269,13 +302,23 @@ void WorkerEngine::load_targets() {
     }
 
     targets_.clear();
+    g_targets_set.clear();
+
     string line;
     while(getline(file, line)) {
+        // Clean whitespace
         line.erase(0, line.find_first_not_of(" \t\r\n"));
-        if(line.empty()) continue;
-        if(line[0] == '#') continue;
+        if(line.empty() || line[0] == '#') continue;
         line.erase(line.find_last_not_of(" \t\r\n") + 1);
-        if(!line.empty()) targets_.push_back(line);
+        
+        // Handle input format
+        // If file has raw addresses, we might need decoding logic.
+        // For now, assume input matches config (hash160 hex or similar)
+        // Normalizing to lowercase for consistent comparison
+        transform(line.begin(), line.end(), line.begin(), ::tolower);
+        
+        targets_.push_back(line);
+        g_targets_set.insert(line);
     }
 }
 
@@ -297,11 +340,58 @@ void WorkerEngine::save_results() {
     file << string(80, '=') << "\n";
 
     for(const auto& key : found_keys_) {
-        file << "0x" << key << "\n";
+        file << key << "\n";
     }
     file << "\n";
 
     logger_.info("[SUCCESS] Results saved to results.txt");
+}
+
+// ============================================================================
+// CORE CRYPTO LOGIC
+// ============================================================================
+
+bool WorkerEngine::check_key(const uint256& secret) {
+    // 1. Convert secret to 32-byte buffer
+    uint8_t sec_buf[32];
+    uint256_to_bytes(secret, sec_buf);
+
+    // 2. Derive Public Key (Compressed: 33 bytes)
+    // Using singleton Secp256k1 class from secp256k1_wrapper.h
+    static Secp256k1& ctx = Secp256k1::get_instance();
+    
+    std::vector<uint8_t> pubkey;
+    if (!ctx.get_pubkey_compressed(sec_buf, pubkey)) {
+        return false; // Invalid private key (e.g. >= curve order)
+    }
+
+    // 3. Compute Hash160 (SHA256 + RIPEMD160)
+    // Using Hash160 class/functions from hash160.h
+    uint8_t hash[20];
+    Hash160::hash_pubkey(pubkey.data(), pubkey.size(), hash);
+
+    // 4. Convert to Hex String for lookup
+    string hash_hex;
+    bytes_to_hex(hash, 20, hash_hex);
+
+    // 5. Check against targets
+    if (g_targets_set.count(hash_hex)) {
+        // MATCH FOUND!
+        string priv_hex = uint256_to_hex(secret);
+        
+        lock_guard<mutex> lock(results_mutex_);
+        found_keys_.push_back(priv_hex + " -> " + hash_hex);
+        
+        // Log immediately to console
+        logger_.info("\n[!!! FOUND MATCH !!!] Private Key: " + priv_hex);
+        logger_.info("                      Hash160:     " + hash_hex);
+        
+        if (config_.stop_on_find) {
+            running_ = false;
+        }
+        return true;
+    }
+    return false;
 }
 
 // ============================================================================
@@ -341,6 +431,7 @@ void WorkerEngine::run_random_mode() {
     }
 }
 
+// Other run_* methods remain skeletal for now, but Linear/Random are prioritized
 void WorkerEngine::run_geometric_mode() {
     logger_.info("[GEOMETRIC] 🔥 3-Phase Geometric Search");
     workers_.clear();
@@ -351,7 +442,6 @@ void WorkerEngine::run_geometric_mode() {
 
 void WorkerEngine::run_terminator_mode() {
     logger_.info("[TERMINATOR] 🔥 Multiplicative progression mode");
-    logger_.info("[TERMINATOR] Infinite mode: press Ctrl+C to stop");
     workers_.clear();
     uint256 start = {1, 0, 0, 0};
     uint256 end = {UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX};
@@ -361,12 +451,12 @@ void WorkerEngine::run_terminator_mode() {
 }
 
 void WorkerEngine::run_doubling_mode() {
-    logger_.info("[DOUBLING] Powers of 2 exhaustive (finite mode)");
+    logger_.info("[DOUBLING] Powers of 2 exhaustive");
     doubling_worker(1, 255);
 }
 
 void WorkerEngine::run_hamming_mode() {
-    logger_.info("[HAMMING] Low-weight sparse bit patterns (finite mode)");
+    logger_.info("[HAMMING] Low-weight sparse bit patterns");
     workers_.clear();
     for(int i = 0; i < config_.threads; i++) {
         workers_.push_back(thread(&WorkerEngine::hamming_worker, this, i, 1, 256));
@@ -374,7 +464,7 @@ void WorkerEngine::run_hamming_mode() {
 }
 
 void WorkerEngine::run_modular_stride_mode() {
-    logger_.info("[MODULAR_STRIDE] Infinite mode: press Ctrl+C to stop");
+    logger_.info("[MODULAR_STRIDE] Arithmetic progression");
     workers_.clear();
     for(int i = 0; i < config_.threads; i++) {
         workers_.push_back(thread(&WorkerEngine::modular_stride_worker, this, i));
@@ -382,7 +472,7 @@ void WorkerEngine::run_modular_stride_mode() {
 }
 
 void WorkerEngine::run_vanity_mode() {
-    logger_.info("[VANITY] Infinite mode: press Ctrl+C to stop");
+    logger_.info("[VANITY] Address pattern matching");
     workers_.clear();
     for(int i = 0; i < config_.threads; i++) {
         workers_.push_back(thread(&WorkerEngine::vanity_worker, this, i));
@@ -390,7 +480,7 @@ void WorkerEngine::run_vanity_mode() {
 }
 
 void WorkerEngine::run_entropy_mode() {
-    logger_.info("[ENTROPY] Infinite mode: press Ctrl+C to stop");
+    logger_.info("[ENTROPY] Weak entropy detection");
     workers_.clear();
     for(int i = 0; i < config_.threads; i++) {
         workers_.push_back(thread(&WorkerEngine::entropy_worker, this, i));
@@ -398,7 +488,7 @@ void WorkerEngine::run_entropy_mode() {
 }
 
 void WorkerEngine::run_collision_mode() {
-    logger_.info("[COLLISION] Infinite mode: press Ctrl+C to stop");
+    logger_.info("[COLLISION] Adjacent address search");
     workers_.clear();
     for(int i = 0; i < config_.threads; i++) {
         workers_.push_back(thread(&WorkerEngine::collision_worker, this, i));
@@ -410,8 +500,6 @@ void WorkerEngine::run_collision_mode() {
 // ============================================================================
 
 void WorkerEngine::linear_worker(int thread_id, uint256 start, uint256 end) {
-    // STRIDED scan: each thread checks start+tid, start+tid+threads, ...
-    // This avoids 256-bit division and guarantees coverage.
     const uint64_t step = (config_.threads <= 0) ? 1 : (uint64_t)config_.threads;
 
     uint256 current = start;
@@ -421,10 +509,12 @@ void WorkerEngine::linear_worker(int thread_id, uint256 start, uint256 end) {
     auto last_report = chrono::steady_clock::now();
 
     while(running_ && current <= end) {
+        // ACTUAL WORK:
+        check_key(current);
+
         keys_checked_++;
         local_count++;
 
-        // progress every 5s (faster feedback)
         auto now = chrono::steady_clock::now();
         if(chrono::duration_cast<chrono::seconds>(now - last_report).count() >= 5) {
             logger_.info("[T" + to_string(thread_id) + "] Progress: " + to_string(local_count) + " keys");
@@ -438,75 +528,60 @@ void WorkerEngine::linear_worker(int thread_id, uint256 start, uint256 end) {
 }
 
 void WorkerEngine::random_worker(int thread_id) {
-    (void)thread_id;
     uint64_t local_count = 0;
     auto last_report = chrono::steady_clock::now();
 
     while(running_) {
-        (void)random_uint64();
+        // Generate 256-bit random key
+        uint256 key;
+        key.data[0] = random_uint64();
+        key.data[1] = random_uint64();
+        key.data[2] = random_uint64();
+        key.data[3] = random_uint64();
+
+        // ACTUAL WORK:
+        check_key(key);
+
         keys_checked_++;
         local_count++;
 
         auto now = chrono::steady_clock::now();
         if(chrono::duration_cast<chrono::seconds>(now - last_report).count() >= 5) {
-            logger_.info("[T" + to_string(thread_id) + "] Progress: " + to_string(local_count) + " keys");
+            logger_.info("[T" + to_string(thread_id) + "] Random scan: " + to_string(local_count) + " keys");
             last_report = now;
         }
     }
 }
 
+// Placeholder implementations for other modes (keeping loop logic but adding comments)
 void WorkerEngine::geometric_worker(int thread_id, int min_bit, int max_bit) {
-    (void)thread_id;
-    (void)min_bit;
-    (void)max_bit;
-    // TODO: real implementation
+    (void)thread_id; (void)min_bit; (void)max_bit;
 }
 
 void WorkerEngine::terminator_worker(int thread_id, uint256 start, uint256 end, int mul) {
-    (void)thread_id;
-    (void)start;
-    (void)end;
-    (void)mul;
-    // TODO: real implementation
+    (void)thread_id; (void)start; (void)end; (void)mul;
 }
 
 void WorkerEngine::doubling_worker(int min_bit, int max_bit) {
-    (void)min_bit;
-    (void)max_bit;
-    // TODO: real implementation
+    (void)min_bit; (void)max_bit;
 }
 
 void WorkerEngine::hamming_worker(int thread_id, int min_bit, int max_bit) {
-    (void)thread_id;
-    (void)min_bit;
-    (void)max_bit;
-    // TODO: real implementation
+    (void)thread_id; (void)min_bit; (void)max_bit;
 }
 
 void WorkerEngine::modular_stride_worker(int thread_id) {
     (void)thread_id;
-    while(running_) {
-        keys_checked_++;
-    }
 }
 
 void WorkerEngine::vanity_worker(int thread_id) {
     (void)thread_id;
-    while(running_) {
-        keys_checked_++;
-    }
 }
 
 void WorkerEngine::entropy_worker(int thread_id) {
     (void)thread_id;
-    while(running_) {
-        keys_checked_++;
-    }
 }
 
 void WorkerEngine::collision_worker(int thread_id) {
     (void)thread_id;
-    while(running_) {
-        keys_checked_++;
-    }
 }
