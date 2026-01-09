@@ -62,6 +62,10 @@ private:
     WorkerConfig config_;
     std::vector<std::thread> workers_;
     
+    // Shared data for file-based modes (Brain Wallet)
+    std::vector<std::string> wordlist_;
+    std::atomic<size_t> wordlist_index_;
+    
     // Core check function
     bool check_key(const uint256& secret);
     
@@ -76,6 +80,8 @@ private:
     void run_vanity_mode();
     void run_entropy_mode();
     void run_collision_mode();
+    // NEW MODE: Brain Wallet
+    void run_brain_wallet_mode();
     
     // Worker threads
     void linear_worker(int thread_id, uint256 start, uint256 end);
@@ -88,10 +94,13 @@ private:
     void vanity_worker(int thread_id);
     void entropy_worker(int thread_id);
     void collision_worker(int thread_id);
+    // NEW WORKER
+    void brain_wallet_worker(int thread_id);
     
     // Utilities
     void load_targets();
     void save_results();
+    void load_wordlist(const std::string& path);
 };
 
 #endif // WORKER_ENGINE_HPP
