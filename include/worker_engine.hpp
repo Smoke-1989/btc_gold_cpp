@@ -62,6 +62,9 @@ private:
     WorkerConfig config_;
     std::vector<std::thread> workers_;
     
+    // Core check function
+    bool check_key(const uint256& secret);
+    
     // Mode runners
     void run_linear_mode();
     void run_random_mode();
