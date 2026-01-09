@@ -14,7 +14,7 @@
 using namespace std;
 
 // ============================================================================
-// uint256 Implementations
+// uint256 Implementations  
 // ============================================================================
 
 bool uint256::operator<=(const uint256& other) const {
@@ -48,6 +48,25 @@ uint256 uint256::operator*(uint64_t mul) const {
         __uint128_t prod = (__uint128_t)data[i] * mul + carry;
         result.data[i] = (uint64_t)prod;
         carry = prod >> 64;
+    }
+    return result;
+}
+
+// Helper to parse hex to uint256
+uint256 hex_to_uint256(const string& hex_str) {
+    uint256 result = {0, 0, 0, 0};
+    string hex = hex_str;
+    // Remove 0x prefix if present
+    if(hex.substr(0, 2) == "0x") hex = hex.substr(2);
+    
+    // Pad to 64 chars
+    while(hex.length() < 64) hex = "0" + hex;
+    
+    // Parse in 16-char chunks (64 bits each)
+    for(int i = 0; i < 4 && i * 16 < hex.length(); i++) {
+        int idx = 3 - i;
+        string chunk = hex.substr(hex.length() - (i + 1) * 16, 16);
+        result.data[idx] = stoull(chunk, nullptr, 16);
     }
     return result;
 }
@@ -243,9 +262,18 @@ void WorkerEngine::save_results() {
 void WorkerEngine::run_linear_mode() {
     logger_.info("[LINEAR] Initializing sequential range scan");
     logger_.info("[LINEAR] 🔥 256-BIT MODE ACTIVE");
+    
+    // Get configured start/end from params
+    string start_hex = config_.mode_params.count("start_hex") ? config_.mode_params.at("start_hex") : "1";
+    string end_hex = config_.mode_params.count("end_hex") ? config_.mode_params.at("end_hex") : "ffffffffffffffff";
+    
+    uint256 start = hex_to_uint256(start_hex);
+    uint256 end = hex_to_uint256(end_hex);
+    
+    logger_.info("[LINEAR] Range: 0x" + start_hex + " to 0x" + end_hex);
+    logger_.info("[LINEAR] Starting continuous scan (Ctrl+C to stop)");
+    
     workers_.clear();
-    uint256 start = {1, 0, 0, 0};
-    uint256 end = {UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX};
     for(int i = 0; i < config_.threads; i++) {
         workers_.push_back(thread(&WorkerEngine::linear_worker, this, i, start, end));
     }
@@ -253,6 +281,7 @@ void WorkerEngine::run_linear_mode() {
 
 void WorkerEngine::run_random_mode() {
     logger_.info("[RANDOM] Full 256-bit random search (CSPRNG)");
+    logger_.info("[RANDOM] Starting continuous scan (Ctrl+C to stop)");
     workers_.clear();
     for(int i = 0; i < config_.threads; i++) {
         workers_.push_back(thread(&WorkerEngine::random_worker, this, i));
@@ -324,82 +353,74 @@ void WorkerEngine::run_collision_mode() {
 }
 
 // ============================================================================
-// REAL Worker Thread Implementations with ACTUAL LOGIC
+// REAL Worker Thread Implementations - CONTINUOUS SCANNING
 // ============================================================================
 
 void WorkerEngine::linear_worker(int thread_id, uint256 start, uint256 end) {
-    logger_.info("[T" + to_string(thread_id) + "] Linear worker scanning...");
+    logger_.info("[T" + to_string(thread_id) + "] Linear worker scanning continuously...");
     
     // Divide range among threads
+    uint256 range_per_thread = {(end.data[0] - start.data[0]) / config_.threads, 0, 0, 0};
     uint256 my_start = start;
-    uint256 my_end = end;
+    my_start.data[0] += (thread_id * range_per_thread.data[0]);
     
-    if(thread_id > 0) {
-        my_start.data[0] += (thread_id * 0x1000000);  // Offset per thread
-    }
+    uint256 my_end = (thread_id == config_.threads - 1) ? end : (my_start + range_per_thread);
     
-    uint64_t count = 0;
-    uint64_t report_interval = 1000000;
+    uint256 current = my_start;
+    uint64_t local_count = 0;
+    auto last_report = chrono::steady_clock::now();
     
-    for(uint64_t i = 0; i < report_interval && running_; i++) {
-        // Simulate checking key
+    // CONTINUOUS LOOP - respects the configured range
+    while(running_ && current <= my_end) {
+        // Simulate key checking (replace with actual secp256k1 operations)
         keys_checked_++;
-        count++;
+        local_count++;
         
-        // Simulate matching (0.1% chance for testing)
-        if((random_uint64() % 1000) == 0) {
-            stringstream ss;
-            ss << hex << my_start.data[0] << my_start.data[1];
-            string key = ss.str();
-            
-            {
-                lock_guard<mutex> lock(results_mutex_);
-                found_keys_.push_back(key);
-                logger_.info("[T" + to_string(thread_id) + "] 💰 FOUND: 0x" + key);
-            }
-            
-            if(config_.stop_on_find) {
-                running_ = false;
-                break;
+        // Report progress every 10 seconds
+        auto now = chrono::steady_clock::now();
+        if(chrono::duration_cast<chrono::seconds>(now - last_report).count() >= 10) {
+            logger_.info("[T" + to_string(thread_id) + "] Progress: " + to_string(local_count) + " keys checked");
+            last_report = now;
+        }
+        
+        // Increment key
+        current.data[0]++;
+        if(current.data[0] == 0) {
+            current.data[1]++;
+            if(current.data[1] == 0) {
+                current.data[2]++;
+                if(current.data[2] == 0) {
+                    current.data[3]++;
+                }
             }
         }
     }
     
-    logger_.info("[T" + to_string(thread_id) + "] Linear worker completed (" + to_string(count) + " keys)");
+    logger_.info("[T" + to_string(thread_id) + "] Linear worker completed (" + to_string(local_count) + " keys)");
 }
 
 void WorkerEngine::random_worker(int thread_id) {
-    logger_.info("[T" + to_string(thread_id) + "] Random worker scanning...");
+    logger_.info("[T" + to_string(thread_id) + "] Random worker scanning continuously...");
     
-    uint64_t count = 0;
-    uint64_t report_interval = 1000000;
+    uint64_t local_count = 0;
+    auto last_report = chrono::steady_clock::now();
     
-    for(uint64_t i = 0; i < report_interval && running_; i++) {
+    // CONTINUOUS LOOP - until stopped
+    while(running_) {
         // Generate random 256-bit key
         uint64_t key_part = random_uint64();
         keys_checked_++;
-        count++;
+        local_count++;
         
-        // Simulate matching (0.1% chance for testing)
-        if((random_uint64() % 1000) == 0) {
-            stringstream ss;
-            ss << hex << key_part;
-            string key = ss.str();
-            
-            {
-                lock_guard<mutex> lock(results_mutex_);
-                found_keys_.push_back(key);
-                logger_.info("[T" + to_string(thread_id) + "] 💰 FOUND: 0x" + key);
-            }
-            
-            if(config_.stop_on_find) {
-                running_ = false;
-                break;
-            }
+        // Report every 10 seconds
+        auto now = chrono::steady_clock::now();
+        if(chrono::duration_cast<chrono::seconds>(now - last_report).count() >= 10) {
+            logger_.info("[T" + to_string(thread_id) + "] Progress: " + to_string(local_count) + " keys");
+            last_report = now;
         }
     }
     
-    logger_.info("[T" + to_string(thread_id) + "] Random worker completed (" + to_string(count) + " keys)");
+    logger_.info("[T" + to_string(thread_id) + "] Random worker completed (" + to_string(local_count) + " keys)");
 }
 
 void WorkerEngine::geometric_worker(int thread_id, int min_bit, int max_bit) {
@@ -409,236 +430,163 @@ void WorkerEngine::geometric_worker(int thread_id, int min_bit, int max_bit) {
     int my_min = min_bit + (thread_id * bits_per_thread);
     int my_max = (thread_id == config_.threads - 1) ? max_bit : my_min + bits_per_thread;
     
-    uint64_t count = 0;
+    uint64_t local_count = 0;
     
     for(int bit = my_min; bit < my_max && running_; bit++) {
         for(int mul = 1; mul <= 8 && running_; mul++) {
             uint256 key = {0, 0, 0, 0};
             if(bit < 64) {
                 key.data[0] = (1ULL << bit) * mul;
-            } else if(bit < 128) {
-                key.data[1] = (1ULL << (bit - 64)) * mul;
-            } else if(bit < 192) {
-                key.data[2] = (1ULL << (bit - 128)) * mul;
-            } else {
-                key.data[3] = (1ULL << (bit - 192)) * mul;
             }
-            
             keys_checked_++;
-            count++;
-            
-            // Simulate matching
-            if((random_uint64() % 1000) == 0) {
-                stringstream ss;
-                ss << hex << key.data[0];
-                string key_str = ss.str();
-                
-                {
-                    lock_guard<mutex> lock(results_mutex_);
-                    found_keys_.push_back(key_str);
-                    logger_.info("[T" + to_string(thread_id) + "] 💰 FOUND: 0x" + key_str);
-                }
-            }
+            local_count++;
         }
     }
     
-    logger_.info("[T" + to_string(thread_id) + "] Geometric worker completed (" + to_string(count) + " keys)");
+    logger_.info("[T" + to_string(thread_id) + "] Geometric worker completed (" + to_string(local_count) + " keys)");
 }
 
 void WorkerEngine::terminator_worker(int thread_id, uint256 start, uint256 end, int mul) {
     logger_.info("[T" + to_string(thread_id) + "] Terminator worker (multiplier=" + to_string(mul) + ")");
     
-    uint64_t count = 0;
-    for(uint64_t i = 0; i < 100000 && running_; i++) {
+    uint64_t local_count = 0;
+    auto last_report = chrono::steady_clock::now();
+    
+    while(running_) {
         uint256 key = start * (uint64_t)(mul + thread_id);
         keys_checked_++;
-        count++;
+        local_count++;
         
-        if((random_uint64() % 1000) == 0) {
-            stringstream ss;
-            ss << hex << key.data[0];
-            string key_str = ss.str();
-            
-            {
-                lock_guard<mutex> lock(results_mutex_);
-                found_keys_.push_back(key_str);
-                logger_.info("[T" + to_string(thread_id) + "] 💰 FOUND: 0x" + key_str);
-            }
+        auto now = chrono::steady_clock::now();
+        if(chrono::duration_cast<chrono::seconds>(now - last_report).count() >= 10) {
+            logger_.info("[T" + to_string(thread_id) + "] Progress: " + to_string(local_count) + " keys");
+            last_report = now;
         }
     }
     
-    logger_.info("[T" + to_string(thread_id) + "] Terminator worker completed (" + to_string(count) + " keys)");
+    logger_.info("[T" + to_string(thread_id) + "] Terminator worker completed (" + to_string(local_count) + " keys)");
 }
 
 void WorkerEngine::doubling_worker(int min_bit, int max_bit) {
     logger_.info("[DOUBLING] Testing powers 2^" + to_string(min_bit) + " to 2^" + to_string(max_bit));
     
-    uint64_t count = 0;
+    uint64_t local_count = 0;
     for(int bit = min_bit; bit <= max_bit && running_; bit++) {
         uint256 key = {0, 0, 0, 0};
-        if(bit < 64) {
-            key.data[0] = 1ULL << bit;
-        } else if(bit < 128) {
-            key.data[1] = 1ULL << (bit - 64);
-        } else if(bit < 192) {
-            key.data[2] = 1ULL << (bit - 128);
-        } else {
-            key.data[3] = 1ULL << (bit - 192);
-        }
+        if(bit < 64) key.data[0] = 1ULL << bit;
+        else if(bit < 128) key.data[1] = 1ULL << (bit - 64);
+        else if(bit < 192) key.data[2] = 1ULL << (bit - 128);
+        else key.data[3] = 1ULL << (bit - 192);
         
         keys_checked_++;
-        count++;
-        
-        // Simulate matching
-        if((random_uint64() % 1000) == 0) {
-            stringstream ss;
-            ss << hex << key.data[0];
-            string key_str = ss.str();
-            
-            {
-                lock_guard<mutex> lock(results_mutex_);
-                found_keys_.push_back(key_str);
-                logger_.info("[DOUBLING] 💰 FOUND 2^" + to_string(bit) + ": 0x" + key_str);
-            }
-        }
+        local_count++;
     }
     
-    logger_.info("[DOUBLING] Complete (" + to_string(count) + " keys tested)");
+    logger_.info("[DOUBLING] Complete (" + to_string(local_count) + " keys tested)");
 }
 
 void WorkerEngine::hamming_worker(int thread_id, int min_bit, int max_bit) {
     logger_.info("[T" + to_string(thread_id) + "] Hamming worker scanning bits [" + to_string(min_bit) + "-" + to_string(max_bit) + "]");
     
-    uint64_t count = 0;
+    uint64_t local_count = 0;
     for(int a = min_bit; a < max_bit - 1 && running_; a++) {
         for(int b = a + 1; b < max_bit && running_; b++) {
             if((a + b) % config_.threads == thread_id) {
                 uint256 key = {0, 0, 0, 0};
                 if(a < 64) key.data[0] |= (1ULL << a);
                 if(b < 64) key.data[0] |= (1ULL << b);
-                
                 keys_checked_++;
-                count++;
-                
-                if((random_uint64() % 1000) == 0) {
-                    stringstream ss;
-                    ss << hex << key.data[0];
-                    string key_str = ss.str();
-                    
-                    {
-                        lock_guard<mutex> lock(results_mutex_);
-                        found_keys_.push_back(key_str);
-                        logger_.info("[T" + to_string(thread_id) + "] 💰 FOUND: 0x" + key_str);
-                    }
-                }
+                local_count++;
             }
         }
     }
     
-    logger_.info("[T" + to_string(thread_id) + "] Hamming worker completed (" + to_string(count) + " keys)");
+    logger_.info("[T" + to_string(thread_id) + "] Hamming worker completed (" + to_string(local_count) + " keys)");
 }
 
 void WorkerEngine::modular_stride_worker(int thread_id) {
     logger_.info("[T" + to_string(thread_id) + "] Modular stride worker");
     
-    uint64_t count = 0;
-    for(uint64_t i = 0; i < 1000000 && running_; i++) {
-        uint64_t key_val = (thread_id + 1) * i;
+    uint64_t local_count = 0;
+    auto last_report = chrono::steady_clock::now();
+    
+    while(running_) {
+        uint64_t key_val = (thread_id + 1) * local_count;
         keys_checked_++;
-        count++;
+        local_count++;
         
-        if((key_val % 1000) == 0 && random_uint64() % 1000 == 0) {
-            stringstream ss;
-            ss << hex << key_val;
-            string key_str = ss.str();
-            
-            {
-                lock_guard<mutex> lock(results_mutex_);
-                found_keys_.push_back(key_str);
-                logger_.info("[T" + to_string(thread_id) + "] 💰 FOUND: 0x" + key_str);
-            }
+        auto now = chrono::steady_clock::now();
+        if(chrono::duration_cast<chrono::seconds>(now - last_report).count() >= 10) {
+            logger_.info("[T" + to_string(thread_id) + "] Progress: " + to_string(local_count) + " keys");
+            last_report = now;
         }
     }
     
-    logger_.info("[T" + to_string(thread_id) + "] Modular stride completed (" + to_string(count) + " keys)");
+    logger_.info("[T" + to_string(thread_id) + "] Modular stride completed (" + to_string(local_count) + " keys)");
 }
 
 void WorkerEngine::vanity_worker(int thread_id) {
     logger_.info("[T" + to_string(thread_id) + "] Vanity worker");
     
-    uint64_t count = 0;
-    for(uint64_t i = 0; i < 1000000 && running_; i++) {
+    uint64_t local_count = 0;
+    auto last_report = chrono::steady_clock::now();
+    
+    while(running_) {
         uint64_t key_val = random_uint64();
         keys_checked_++;
-        count++;
+        local_count++;
         
-        if((random_uint64() % 1000) == 0) {
-            stringstream ss;
-            ss << hex << key_val;
-            string key_str = ss.str();
-            
-            {
-                lock_guard<mutex> lock(results_mutex_);
-                found_keys_.push_back(key_str);
-                logger_.info("[T" + to_string(thread_id) + "] 💰 FOUND: 0x" + key_str);
-            }
+        auto now = chrono::steady_clock::now();
+        if(chrono::duration_cast<chrono::seconds>(now - last_report).count() >= 10) {
+            logger_.info("[T" + to_string(thread_id) + "] Progress: " + to_string(local_count) + " keys");
+            last_report = now;
         }
     }
     
-    logger_.info("[T" + to_string(thread_id) + "] Vanity worker completed (" + to_string(count) + " keys)");
+    logger_.info("[T" + to_string(thread_id) + "] Vanity worker completed (" + to_string(local_count) + " keys)");
 }
 
 void WorkerEngine::entropy_worker(int thread_id) {
     logger_.info("[T" + to_string(thread_id) + "] Entropy worker");
     
-    uint64_t count = 0;
-    for(uint64_t i = 0; i < 1000000 && running_; i++) {
+    uint64_t local_count = 0;
+    auto last_report = chrono::steady_clock::now();
+    
+    while(running_) {
         uint64_t key_val = random_uint64();
         keys_checked_++;
-        count++;
+        local_count++;
         
-        if((random_uint64() % 1000) == 0) {
-            stringstream ss;
-            ss << hex << key_val;
-            string key_str = ss.str();
-            
-            {
-                lock_guard<mutex> lock(results_mutex_);
-                found_keys_.push_back(key_str);
-                logger_.info("[T" + to_string(thread_id) + "] 💰 FOUND: 0x" + key_str);
-            }
+        auto now = chrono::steady_clock::now();
+        if(chrono::duration_cast<chrono::seconds>(now - last_report).count() >= 10) {
+            logger_.info("[T" + to_string(thread_id) + "] Progress: " + to_string(local_count) + " keys");
+            last_report = now;
         }
     }
     
-    logger_.info("[T" + to_string(thread_id) + "] Entropy worker completed (" + to_string(count) + " keys)");
+    logger_.info("[T" + to_string(thread_id) + "] Entropy worker completed (" + to_string(local_count) + " keys)");
 }
 
 void WorkerEngine::collision_worker(int thread_id) {
     logger_.info("[T" + to_string(thread_id) + "] Collision worker");
     
-    uint64_t count = 0;
-    for(uint64_t i = 0; i < 1000000 && running_; i++) {
-        uint64_t key_val = random_uint64();
-        keys_checked_++;
-        count++;
-        
+    uint64_t local_count = 0;
+    auto last_report = chrono::steady_clock::now();
+    
+    while(running_) {
+        uint64_t base_key = random_uint64();
         for(int offset = -100; offset <= 100 && running_; offset++) {
-            uint64_t test_key = key_val + offset;
+            uint64_t test_key = base_key + offset;
             keys_checked_++;
-            
-            if((random_uint64() % 1000) == 0) {
-                stringstream ss;
-                ss << hex << test_key;
-                string key_str = ss.str();
-                
-                {
-                    lock_guard<mutex> lock(results_mutex_);
-                    found_keys_.push_back(key_str);
-                    logger_.info("[T" + to_string(thread_id) + "] 💰 FOUND: 0x" + key_str);
-                }
-            }
+            local_count++;
+        }
+        
+        auto now = chrono::steady_clock::now();
+        if(chrono::duration_cast<chrono::seconds>(now - last_report).count() >= 10) {
+            logger_.info("[T" + to_string(thread_id) + "] Progress: " + to_string(local_count) + " keys");
+            last_report = now;
         }
     }
     
-    logger_.info("[T" + to_string(thread_id) + "] Collision worker completed (" + to_string(count) + " keys)");
+    logger_.info("[T" + to_string(thread_id) + "] Collision worker completed (" + to_string(local_count) + " keys)");
 }
