@@ -1,0 +1,58 @@
+cmake_minimum_required(VERSION 3.10)
+project(btc_gold_v5 CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native -pthread")
+
+# CPU-ONLY BUILD - NO GPU SUPPORT
+message(STATUS "Building BTC GOLD in CPU-ONLY mode")
+
+# Find OpenSSL
+find_package(OpenSSL REQUIRED)
+
+# Include directories
+include_directories(${CMAKE_SOURCE_DIR}/include)
+include_directories(${OPENSSL_INCLUDE_DIR})
+
+# Source files
+set(SOURCES
+    src/main_v5.cpp
+    src/worker_engine.cpp
+    src/interactive_menu.cpp
+    src/config.cpp
+    src/logger.cpp
+    src/secp256k1_wrapper.cpp
+    src/hash160.cpp
+)
+
+# Create executable with explicit output directory
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_executable(btc_gold ${SOURCES})
+
+# Link libraries
+# Try to link with secp256k1, but make it optional for easier development
+target_link_libraries(btc_gold pthread ${OPENSSL_CRYPTO_LIBRARY})
+
+# Try to find and link libsecp256k1
+find_library(SECP256K1_LIB secp256k1)
+if(SECP256K1_LIB)
+    target_link_libraries(btc_gold ${SECP256K1_LIB})
+    message(STATUS "libsecp256k1 found: ${SECP256K1_LIB}")
+else()
+    message(WARNING "libsecp256k1 not found. Install with: sudo apt install libsecp256k1-dev")
+endif()
+
+# Enable testing
+enable_testing()
+
+# Install target
+install(TARGETS btc_gold DESTINATION bin)
+
+message(STATUS "")
+message(STATUS "=== BUILD CONFIGURATION ===")
+message(STATUS "Mode: CPU-ONLY")
+message(STATUS "Output: ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/btc_gold")
+message(STATUS "Optimizations: -O3 -march=native")
+message(STATUS "C++ Standard: 17")
+message(STATUS "")
